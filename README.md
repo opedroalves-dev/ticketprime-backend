@@ -1,8 +1,16 @@
 # TicketPrime
 
-Sistema de gerenciamento de tickets utilizando **.NET 8**, **Minimal API**, **Dapper** e **SQL Server**.
+Backend/API do TicketPrime para venda de ingressos, cadastro de eventos, cupons, usuários e reservas, utilizando **.NET 8**, **Minimal API**, **Dapper** e **SQL Server**.
 
-## Tecnologias
+---
+
+## Objetivo do Sistema
+
+O **TicketPrime** é uma API backend acadêmica para venda de ingressos, cadastro de eventos, cupons, usuários e reservas, com armazenamento persistente em SQL Server e acesso a dados via Dapper com parâmetros nomeados.
+
+---
+
+## Tecnologias Utilizadas
 
 | Tecnologia | Versão | Finalidade |
 |---|---|---|
@@ -12,77 +20,101 @@ Sistema de gerenciamento de tickets utilizando **.NET 8**, **Minimal API**, **Da
 | SQL Server | 2022+ | Banco de dados relacional |
 | xUnit | 2.9.3 | Testes unitários e de integração |
 
-## Pré-requisitos
+---
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [SQL Server 2022+](https://www.microsoft.com/en-us/sql-server/sql-server-downloads)
-- [Visual Studio 2022](https://visualstudio.microsoft.com/) ou [VS Code](https://code.visualstudio.com/)
-
-## Estrutura do Projeto
+## Estrutura Obrigatória do Repositório
 
 ```
 /
-├── docs/                          # Documentação do projeto
-├── db/                            # Scripts de banco de dados
+├── docs/
+├── db/
 │   └── scripts/
-│       └── 001_CreateSchema.sql   # Script inicial de schema
-├── src/                           # Código fonte
-│   └── TicketPrime.Api/           # Projeto da Minimal API
-│       ├── Program.cs             # Entry point da aplicação
-│       ├── appsettings.json       # Configurações (connection string)
+│       └── 001_CreateSchema.sql
+├── src/
+│   └── TicketPrime.Api/
+│       ├── Program.cs
+│       ├── appsettings.json
 │       ├── appsettings.Development.json
 │       └── TicketPrime.Api.csproj
-├── tests/                         # Projetos de teste
-│   └── TicketPrime.Tests/         # Testes xUnit
-│       ├── UnitTest1.cs           # Teste dummy inicial
+├── tests/
+│   └── TicketPrime.Tests/
+│       ├── UnitTest1.cs
 │       └── TicketPrime.Tests.csproj
-├── TicketPrime.sln                # Arquivo de solução
-├── README.md
-└── release_checklist_final.md
+├── TicketPrime.sln
+└── README.md
 ```
 
-## Configuração
+---
 
-### 1. Connection String
-
-Edite o arquivo [`src/TicketPrime.Api/appsettings.json`](src/TicketPrime.Api/appsettings.json) e ajuste a connection string `DefaultConnection` para o seu ambiente SQL Server:
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=localhost;Database=TicketPrimeDb;User Id=sa;Password=YourPassword123!;TrustServerCertificate=True;"
-  }
-}
-```
-
-### 2. Banco de Dados
-
-Execute o script [`db/scripts/001_CreateSchema.sql`](db/scripts/001_CreateSchema.sql) no SQL Server para criar o banco e o schema inicial.
-
-### 3. Restaurar Pacotes
+## Como Restaurar Dependências
 
 ```bash
 dotnet restore
 ```
 
-### 4. Executar a Aplicação
+---
+
+## Como Compilar o Projeto
+
+```bash
+dotnet build
+```
+
+---
+
+## Como Executar a API
 
 ```bash
 dotnet run --project src/TicketPrime.Api
 ```
 
-### 5. Executar os Testes
+A API será iniciada na porta configurada em `src/TicketPrime.Api/Properties/launchSettings.json`.
+
+---
+
+## Como Executar os Testes
 
 ```bash
 dotnet test
 ```
 
-## Restrições do Projeto
+---
 
-- ❌ **Não** utilizar Entity Framework (nem EF Core, nem EF6)
-- ❌ **Não** utilizar banco em memória (InMemory Database)
-- ❌ **Não** alterar nomes de pastas (`/docs`, `/db`, `/src`, `/tests`)
-- ❌ **Não** alterar nomes de rotas
-- ❌ **Não** utilizar SQL interpolation (`$"SELECT * FROM {tabela}"`)
-- ❌ **Não** utilizar concatenação SQL (`"SELECT * FROM " + tabela`)
-- ✅ Utilizar **Dapper** com parâmetros nomeados (`@param`) para acesso a dados
+## Como Executar o Script SQL
+
+Conecte-se à instância do SQL Server e execute o script [`db/scripts/001_CreateSchema.sql`](db/scripts/001_CreateSchema.sql):
+
+```bash
+sqlcmd -S localhost -U sa -P YourPassword123! -i db/scripts/001_CreateSchema.sql
+```
+
+---
+
+## Endpoints
+
+### AV1
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/api/eventos` | Cadastrar um novo evento |
+| `GET` | `/api/eventos` | Listar todos os eventos |
+| `POST` | `/api/cupons` | Cadastrar um novo cupom |
+| `POST` | `/api/usuarios` | Cadastrar um novo usuário |
+
+### AV2
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/api/reservas/{cpf}` | Listar reservas de um usuário pelo CPF |
+| `POST` | `/api/reservas` | Criar uma nova reserva |
+
+---
+
+## Regras de Segurança do Projeto
+
+- **Sem Entity Framework** — acesso a dados exclusivamente com Dapper.
+- **Sem banco em memória** — apenas SQL Server real.
+- **Sem SQL injection** — todas as consultas deverão utilizar parâmetros nomeados (`@param`).
+- **Sem concatenação SQL** — nenhuma string SQL deverá ser construída por concatenação.
+- **Sem interpolação SQL** — nenhuma string SQL deverá utilizar interpolação (`$"..."`).
+- **Nomes de pastas fixos** — as pastas `/docs`, `/db`, `/src` e `/tests` não poderão ser renomeadas.
