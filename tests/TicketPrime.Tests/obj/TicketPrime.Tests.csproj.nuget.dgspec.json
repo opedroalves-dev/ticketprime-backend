@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/pedro/Downloads/ticket og/tests/TicketPrime.Tests/TicketPrime.Tests.csproj": {}
+    "/home/pedro/Downloads/ticketprime-backend/tests/TicketPrime.Tests/TicketPrime.Tests.csproj": {}
   },
   "projects": {
-    "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj": {
+    "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj",
+        "projectUniqueName": "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj",
         "projectName": "TicketPrime.Api",
-        "projectPath": "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj",
+        "projectPath": "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj",
         "packagesPath": "/home/pedro/.nuget/packages/",
-        "outputPath": "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/obj/",
+        "outputPath": "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/pedro/.nuget/NuGet/NuGet.Config"
@@ -48,6 +48,10 @@
             "Dapper": {
               "target": "Package",
               "version": "[2.1.35, )"
+            },
+            "Microsoft.Data.SqlClient": {
+              "target": "Package",
+              "version": "[7.0.1, )"
             }
           },
           "imports": [
@@ -87,14 +91,14 @@
         }
       }
     },
-    "/home/pedro/Downloads/ticket og/tests/TicketPrime.Tests/TicketPrime.Tests.csproj": {
+    "/home/pedro/Downloads/ticketprime-backend/tests/TicketPrime.Tests/TicketPrime.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/pedro/Downloads/ticket og/tests/TicketPrime.Tests/TicketPrime.Tests.csproj",
+        "projectUniqueName": "/home/pedro/Downloads/ticketprime-backend/tests/TicketPrime.Tests/TicketPrime.Tests.csproj",
         "projectName": "TicketPrime.Tests",
-        "projectPath": "/home/pedro/Downloads/ticket og/tests/TicketPrime.Tests/TicketPrime.Tests.csproj",
+        "projectPath": "/home/pedro/Downloads/ticketprime-backend/tests/TicketPrime.Tests/TicketPrime.Tests.csproj",
         "packagesPath": "/home/pedro/.nuget/packages/",
-        "outputPath": "/home/pedro/Downloads/ticket og/tests/TicketPrime.Tests/obj/",
+        "outputPath": "/home/pedro/Downloads/ticketprime-backend/tests/TicketPrime.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/pedro/.nuget/NuGet/NuGet.Config"
@@ -110,8 +114,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj": {
-                "projectPath": "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj"
+              "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj": {
+                "projectPath": "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj"
               }
             }
           }

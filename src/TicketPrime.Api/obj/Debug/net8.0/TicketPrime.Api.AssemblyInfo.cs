@@ -10,10 +10,11 @@
 using System;
 using System.Reflection;
 
+[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("caae93d0-1baf-4916-b309-cd737e96a0d9")]
 [assembly: System.Reflection.AssemblyCompanyAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+881739b0672442366ce2a9737bf1bb6ea8e85215")]
 [assembly: System.Reflection.AssemblyProductAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

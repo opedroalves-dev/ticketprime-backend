@@ -77,9 +77,8 @@ dotnet sln add tests/TicketPrime.Tests/TicketPrime.Tests.csproj
 
 **Program.cs** - Estrutura mínima com:
 - Builder padrão
-- Swagger (opcional mas comum para dev)
-- Mapeamento vazio (sem endpoints ainda)
 - Conexão com SQL Server via `SqlConnection` + Dapper
+- Mapeamento vazio (sem endpoints ainda)
 
 **appsettings.json** - Connection string para SQL Server (placeholder).
 
@@ -138,7 +137,7 @@ graph TD
 ```mermaid
 graph LR
     API[TicketPrime.Api] -->|Dapper| SQL[SQL Server]
-    API -->|System.Data.SqlClient| SQL
+    API -->|Microsoft.Data.SqlClient| SQL
     TEST[TicketPrime.Tests] -->|xUnit| API
     TEST -->|Dapper| SQL
 ```

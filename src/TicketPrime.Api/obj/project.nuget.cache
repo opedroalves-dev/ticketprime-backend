@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "HfzII+D64hM=",
+  "dgSpecHash": "qTQYWm6KYyU=",
   "success": true,
-  "projectFilePath": "/home/pedro/Downloads/ticket og/src/TicketPrime.Api/TicketPrime.Api.csproj",
+  "projectFilePath": "/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/TicketPrime.Api.csproj",
   "expectedPackageFiles": [
     "/home/pedro/.nuget/packages/dapper/2.1.35/dapper.2.1.35.nupkg.sha512",
     "/home/pedro/.nuget/packages/microsoft.bcl.cryptography/8.0.0/microsoft.bcl.cryptography.8.0.0.nupkg.sha512",
@@ -28,9 +28,9 @@
     "/home/pedro/.nuget/packages/system.identitymodel.tokens.jwt/8.16.0/system.identitymodel.tokens.jwt.8.16.0.nupkg.sha512",
     "/home/pedro/.nuget/packages/system.security.cryptography.pkcs/8.0.1/system.security.cryptography.pkcs.8.0.1.nupkg.sha512",
     "/home/pedro/.nuget/packages/system.security.cryptography.protecteddata/8.0.0/system.security.cryptography.protecteddata.8.0.0.nupkg.sha512",
+    "/home/pedro/.nuget/packages/microsoft.netcore.app.ref/8.0.26/microsoft.netcore.app.ref.8.0.26.nupkg.sha512",
     "/home/pedro/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.26/microsoft.aspnetcore.app.ref.8.0.26.nupkg.sha512",
-    "/home/pedro/.nuget/packages/microsoft.netcore.app.host.linux-x64/8.0.26/microsoft.netcore.app.host.linux-x64.8.0.26.nupkg.sha512",
-    "/home/pedro/.nuget/packages/microsoft.netcore.app.ref/8.0.26/microsoft.netcore.app.ref.8.0.26.nupkg.sha512"
+    "/home/pedro/.nuget/packages/microsoft.netcore.app.host.linux-x64/8.0.26/microsoft.netcore.app.host.linux-x64.8.0.26.nupkg.sha512"
   ],
   "logs": []
 }
