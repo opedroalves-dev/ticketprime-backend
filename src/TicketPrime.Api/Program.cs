@@ -111,7 +111,43 @@ app.MapGet("/api/eventos", async (IDbConnection db) =>
     return Results.Ok(eventos);
 });
 
+app.MapPost("/api/cupons", async (IDbConnection db, CupomRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Codigo))
+        return Results.BadRequest(new { erro = "Código é obrigatório." });
+
+    if (request.Codigo.Length > 50)
+        return Results.BadRequest(new { erro = "Código não pode exceder 50 caracteres." });
+
+    if (request.PorcentagemDesconto <= 0)
+        return Results.BadRequest(new { erro = "PorcentagemDesconto deve ser maior que zero." });
+
+    if (request.ValorMinimoRegra < 0)
+        return Results.BadRequest(new { erro = "ValorMinimoRegra não pode ser negativo." });
+
+    var existe = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM Cupons WHERE Codigo = @Codigo",
+        new { request.Codigo });
+
+    if (existe > 0)
+        return Results.BadRequest(new { erro = "Código já existe." });
+
+    await db.ExecuteAsync(
+        "INSERT INTO Cupons (Codigo, PorcentagemDesconto, ValorMinimoRegra) VALUES (@Codigo, @PorcentagemDesconto, @ValorMinimoRegra)",
+        new { request.Codigo, request.PorcentagemDesconto, request.ValorMinimoRegra });
+
+    var cupom = new Cupom
+    {
+        Codigo = request.Codigo,
+        PorcentagemDesconto = request.PorcentagemDesconto,
+        ValorMinimoRegra = request.ValorMinimoRegra
+    };
+
+    return Results.Created($"/api/cupons/{request.Codigo}", cupom);
+});
+
 app.Run();
 
 public record UsuarioRequest(string Cpf, string Nome, string Email);
 public record EventoRequest(string Nome, int CapacidadeTotal, DateTime DataEvento, decimal PrecoPadrao);
+public record CupomRequest(string Codigo, decimal PorcentagemDesconto, decimal ValorMinimoRegra);
