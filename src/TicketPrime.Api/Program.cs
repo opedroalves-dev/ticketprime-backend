@@ -20,11 +20,28 @@ app.MapPost("/api/usuarios", async (IDbConnection db, UsuarioRequest request) =>
     if (string.IsNullOrWhiteSpace(request.Cpf))
         return Results.BadRequest(new { erro = "CPF é obrigatório." });
 
+    if (!request.Cpf.All(char.IsDigit))
+        return Results.BadRequest(new { erro = "CPF deve conter apenas números." });
+
+    if (request.Cpf.Length != 11)
+        return Results.BadRequest(new { erro = "CPF deve ter 11 dígitos." });
+
     if (string.IsNullOrWhiteSpace(request.Nome))
         return Results.BadRequest(new { erro = "Nome é obrigatório." });
 
+    if (request.Nome.Length > 100)
+        return Results.BadRequest(new { erro = "Nome não pode exceder 100 caracteres." });
+
     if (string.IsNullOrWhiteSpace(request.Email))
         return Results.BadRequest(new { erro = "Email é obrigatório." });
+
+    if (request.Email.Length > 150)
+        return Results.BadRequest(new { erro = "Email não pode exceder 150 caracteres." });
+
+    if (!request.Email.Contains('@') ||
+        request.Email.IndexOf('@') == 0 ||
+        request.Email.IndexOf('@') == request.Email.Length - 1)
+        return Results.BadRequest(new { erro = "Email inválido." });
 
     var existe = await db.ExecuteScalarAsync<int>(
         "SELECT COUNT(1) FROM Usuarios WHERE Cpf = @Cpf",
@@ -51,6 +68,9 @@ app.MapPost("/api/eventos", async (IDbConnection db, EventoRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Nome))
         return Results.BadRequest(new { erro = "Nome é obrigatório." });
+
+    if (request.Nome.Length > 200)
+        return Results.BadRequest(new { erro = "Nome não pode exceder 200 caracteres." });
 
     if (request.CapacidadeTotal <= 0)
         return Results.BadRequest(new { erro = "CapacidadeTotal deve ser maior que zero." });
@@ -80,6 +100,15 @@ app.MapPost("/api/eventos", async (IDbConnection db, EventoRequest request) =>
     };
 
     return Results.Created($"/api/eventos/{id}", evento);
+});
+
+app.MapGet("/api/eventos", async (IDbConnection db) =>
+{
+    const string sql = "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos";
+
+    var eventos = await db.QueryAsync<Evento>(sql);
+
+    return Results.Ok(eventos);
 });
 
 app.Run();
