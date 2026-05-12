@@ -18,17 +18,23 @@ GO
 CREATE SCHEMA [dbo];
 GO
 
--- Placeholder: as tabelas de domínio serão criadas aqui
--- quando as regras de negócio forem implementadas.
+-- Tabela de Usuarios
+CREATE TABLE [dbo].[Usuarios] (
+    [Cpf]   VARCHAR(11)     NOT NULL,
+    [Nome]  VARCHAR(100)    NOT NULL,
+    [Email] VARCHAR(150)    NOT NULL,
+    CONSTRAINT [PK_Usuarios] PRIMARY KEY CLUSTERED ([Cpf])
+);
 
--- Exemplo futuro:
--- CREATE TABLE [dbo].[Tickets] (
---     [Id]            INT IDENTITY(1,1)   NOT NULL,
---     [Title]         NVARCHAR(200)       NOT NULL,
---     [Description]   NVARCHAR(2000)      NULL,
---     [CreatedAt]     DATETIME2           NOT NULL DEFAULT GETUTCDATE(),
---     CONSTRAINT [PK_Tickets] PRIMARY KEY CLUSTERED ([Id])
--- );
+-- Tabela de Eventos
+CREATE TABLE [dbo].[Eventos] (
+    [Id]             INT IDENTITY(1,1)   NOT NULL,
+    [Nome]           VARCHAR(200)        NOT NULL,
+    [CapacidadeTotal] INT                NOT NULL,
+    [DataEvento]     DATETIME            NOT NULL,
+    [PrecoPadrao]    DECIMAL(10,2)       NOT NULL,
+    CONSTRAINT [PK_Eventos] PRIMARY KEY CLUSTERED ([Id])
+);
 
 PRINT 'Schema TicketPrimeDb criado com sucesso.';
 GO

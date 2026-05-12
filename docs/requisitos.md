@@ -99,9 +99,9 @@ Então o sistema deve rejeitar o cadastro com mensagem de erro informando que a 
 
 **Cenário 3: Cadastro de evento com preço inválido**
 
-Dado que o organizador informou preço negativo  
-Quando a requisição de cadastro for enviada  
-Então o sistema deve rejeitar o cadastro com mensagem de erro informando que o preço deve ser maior que zero
+Dado que o organizador informou preço negativo
+Quando a requisição de cadastro for enviada
+Então o sistema deve rejeitar o cadastro com mensagem de erro informando que o preço deve ser maior ou igual a zero
 
 ---
 
