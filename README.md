@@ -27,18 +27,26 @@ O **TicketPrime** é uma API backend acadêmica para venda de ingressos, cadastr
 ```
 /
 ├── docs/
+│   └── requisitos.md
 ├── db/
+│   ├── ticketprime.sql
 │   └── scripts/
-│       └── 001_CreateSchema.sql
+│       ├── 001_CreateSchema.sql
+│       └── 002_CreateCupons.sql
 ├── src/
 │   └── TicketPrime.Api/
 │       ├── Program.cs
 │       ├── appsettings.json
 │       ├── appsettings.Development.json
-│       └── TicketPrime.Api.csproj
+│       ├── TicketPrime.Api.csproj
+│       └── Models/
+│           ├── Cupom.cs
+│           ├── Evento.cs
+│           └── Usuario.cs
 ├── tests/
 │   └── TicketPrime.Tests/
-│       ├── UnitTest1.cs
+│       ├── ModelsTests.cs
+│       ├── RequestTests.cs
 │       └── TicketPrime.Tests.csproj
 ├── TicketPrime.sln
 └── README.md
@@ -82,10 +90,17 @@ dotnet test
 
 ## Como Executar o Script SQL
 
-Conecte-se à instância do SQL Server e execute o script [`db/scripts/001_CreateSchema.sql`](db/scripts/001_CreateSchema.sql):
+Conecte-se à instância do SQL Server e execute o script completo [`db/ticketprime.sql`](db/ticketprime.sql):
+
+```bash
+sqlcmd -S localhost -U sa -P YourPassword123! -i db/ticketprime.sql
+```
+
+Ou execute incrementalmente os scripts de migração em ordem:
 
 ```bash
 sqlcmd -S localhost -U sa -P YourPassword123! -i db/scripts/001_CreateSchema.sql
+sqlcmd -S localhost -U sa -P YourPassword123! -i db/scripts/002_CreateCupons.sql
 ```
 
 ---
