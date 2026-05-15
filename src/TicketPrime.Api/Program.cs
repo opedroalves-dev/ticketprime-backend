@@ -194,6 +194,95 @@ app.MapPost("/api/eventos", async (IDbConnection db, [FromBody] EventoRequest re
     return Results.Created($"/api/eventos/{id}", evento);
 });
 
+app.MapPost("/api/reservas", async (IDbConnection db, [FromBody] ReservaRequest request) =>
+{
+    // Validações de entrada
+    if (string.IsNullOrWhiteSpace(request.UsuarioCpf))
+        return Results.BadRequest(new { erro = "CPF do usuário é obrigatório." });
+
+    if (request.UsuarioCpf.Length != 11 || !request.UsuarioCpf.All(char.IsDigit))
+        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
+
+    if (request.EventoId <= 0)
+        return Results.BadRequest(new { erro = "EventoId deve ser maior que zero." });
+
+    // R1: Validar se UsuarioCpf existe
+    var usuarioExiste = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM Usuarios WHERE Cpf = @Cpf",
+        new { Cpf = request.UsuarioCpf });
+
+    if (usuarioExiste == 0)
+        return Results.BadRequest(new { erro = "Usuário não encontrado para o CPF informado." });
+
+    // R1: Validar se EventoId existe e obter dados do evento
+    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
+        new { Id = request.EventoId });
+
+    if (evento is null)
+        return Results.BadRequest(new { erro = "Evento não encontrado para o Id informado." });
+
+    // R2: Mesmo CPF não pode ter mais de 2 reservas para o mesmo EventoId
+    var reservasCpfEvento = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM Reservas WHERE UsuarioCpf = @UsuarioCpf AND EventoId = @EventoId",
+        new { UsuarioCpf = request.UsuarioCpf, EventoId = request.EventoId });
+
+    if (reservasCpfEvento >= 2)
+        return Results.BadRequest(new { erro = "CPF já possui o limite máximo de 2 reservas para este evento." });
+
+    // R3: Verificar capacidade total do evento
+    var totalReservasEvento = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM Reservas WHERE EventoId = @EventoId",
+        new { EventoId = request.EventoId });
+
+    if (totalReservasEvento >= evento.CapacidadeTotal)
+        return Results.BadRequest(new { erro = "Evento lotado. Não há vagas disponíveis." });
+
+    // R4: Processar cupom de desconto, se informado
+    decimal valorFinalPago = evento.PrecoPadrao;
+
+    if (!string.IsNullOrWhiteSpace(request.CupomUtilizado))
+    {
+        var cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
+            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
+            new { Codigo = request.CupomUtilizado });
+
+        if (cupom is null)
+            return Results.BadRequest(new { erro = "Cupom não encontrado." });
+
+        // Aplica desconto apenas se PrecoPadrao >= ValorMinimoRegra
+        if (evento.PrecoPadrao >= cupom.ValorMinimoRegra)
+        {
+            valorFinalPago = evento.PrecoPadrao - (evento.PrecoPadrao * cupom.PorcentagemDesconto / 100m);
+        }
+    }
+
+    // Inserir a reserva
+    var sql = @"INSERT INTO Reservas (UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago)
+                OUTPUT INSERTED.Id
+                VALUES (@UsuarioCpf, @EventoId, @CupomUtilizado, @ValorFinalPago)";
+
+    var reservaId = await db.QuerySingleAsync<int>(sql, new
+    {
+        UsuarioCpf = request.UsuarioCpf,
+        EventoId = request.EventoId,
+        CupomUtilizado = string.IsNullOrWhiteSpace(request.CupomUtilizado) ? null : request.CupomUtilizado,
+        ValorFinalPago = valorFinalPago
+    });
+
+    var reservaResponse = new ReservaResponse
+    {
+        Id = reservaId,
+        UsuarioCpf = request.UsuarioCpf,
+        EventoId = request.EventoId,
+        NomeEvento = evento.Nome,
+        CupomUtilizado = string.IsNullOrWhiteSpace(request.CupomUtilizado) ? null : request.CupomUtilizado,
+        ValorFinalPago = valorFinalPago
+    };
+
+    return Results.Created($"/api/reservas/{reservaId}", reservaResponse);
+});
+
 app.MapGet("/api/eventos", async (IDbConnection db) =>
 {
     const string sql = "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos";
@@ -278,4 +367,11 @@ public class CupomRequest
     public string Codigo { get; set; } = string.Empty;
     public decimal PorcentagemDesconto { get; set; }
     public decimal ValorMinimoRegra { get; set; }
+}
+
+public class ReservaRequest
+{
+    public string UsuarioCpf { get; set; } = string.Empty;
+    public int EventoId { get; set; }
+    public string? CupomUtilizado { get; set; }
 }
