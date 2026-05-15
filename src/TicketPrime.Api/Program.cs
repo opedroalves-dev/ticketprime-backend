@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
 using TicketPrime.Api.Models;
@@ -10,6 +11,13 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 
 builder.Services.AddScoped<IDbConnection>(sp =>
     new SqlConnection(connectionString));
+
+// Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.PropertyNamingPolicy = null; // Preserva os nomes originais (PascalCase)
+});
 
 var app = builder.Build();
 
@@ -99,7 +107,7 @@ static async Task InicializarBancoAsync(string connStr)
 
 app.MapGet("/", () => "TicketPrime API");
 
-app.MapPost("/api/usuarios", async (IDbConnection db, UsuarioRequest request) =>
+app.MapPost("/api/usuarios", async (IDbConnection db, [FromBody] UsuarioRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Cpf))
         return Results.BadRequest(new { erro = "CPF é obrigatório." });
@@ -148,7 +156,7 @@ app.MapPost("/api/usuarios", async (IDbConnection db, UsuarioRequest request) =>
     return Results.Created($"/api/usuarios/{request.Cpf}", usuario);
 });
 
-app.MapPost("/api/eventos", async (IDbConnection db, EventoRequest request) =>
+app.MapPost("/api/eventos", async (IDbConnection db, [FromBody] EventoRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Nome))
         return Results.BadRequest(new { erro = "Nome é obrigatório." });
@@ -195,7 +203,7 @@ app.MapGet("/api/eventos", async (IDbConnection db) =>
     return Results.Ok(eventos);
 });
 
-app.MapPost("/api/cupons", async (IDbConnection db, CupomRequest request) =>
+app.MapPost("/api/cupons", async (IDbConnection db, [FromBody] CupomRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Codigo))
         return Results.BadRequest(new { erro = "Código é obrigatório." });
@@ -230,8 +238,44 @@ app.MapPost("/api/cupons", async (IDbConnection db, CupomRequest request) =>
     return Results.Created($"/api/cupons/{request.Codigo}", cupom);
 });
 
+app.MapGet("/api/reservas/{cpf}", async (IDbConnection db, string cpf) =>
+{
+    const string sql = @"
+        SELECT r.Id, r.UsuarioCpf, r.EventoId, e.Nome AS NomeEvento, r.CupomUtilizado, r.ValorFinalPago
+        FROM Reservas r
+        INNER JOIN Eventos e ON r.EventoId = e.Id
+        WHERE r.UsuarioCpf = @Cpf";
+
+    var reservas = await db.QueryAsync<ReservaResponse>(sql, new { Cpf = cpf });
+
+    var lista = reservas.AsList();
+
+    if (lista.Count == 0)
+        return Results.NotFound(new { mensagem = "Nenhuma reserva encontrada para o CPF informado." });
+
+    return Results.Ok(lista);
+});
+
 app.Run();
 
-public record UsuarioRequest(string Cpf, string Nome, string Email);
-public record EventoRequest(string Nome, int CapacidadeTotal, DateTime DataEvento, decimal PrecoPadrao);
-public record CupomRequest(string Codigo, decimal PorcentagemDesconto, decimal ValorMinimoRegra);
+public class UsuarioRequest
+{
+    public string Cpf { get; set; } = string.Empty;
+    public string Nome { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+}
+
+public class EventoRequest
+{
+    public string Nome { get; set; } = string.Empty;
+    public int CapacidadeTotal { get; set; }
+    public DateTime DataEvento { get; set; }
+    public decimal PrecoPadrao { get; set; }
+}
+
+public class CupomRequest
+{
+    public string Codigo { get; set; } = string.Empty;
+    public decimal PorcentagemDesconto { get; set; }
+    public decimal ValorMinimoRegra { get; set; }
+}
