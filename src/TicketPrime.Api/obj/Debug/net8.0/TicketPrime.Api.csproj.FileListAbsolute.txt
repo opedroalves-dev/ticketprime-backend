@@ -71,8 +71,8 @@
 /home/pedro/Downloads/ticket og/src/TicketPrime.Api/obj/Debug/net8.0/TicketPrime.Api.genruntimeconfig.cache
 /home/pedro/Downloads/ticket og/src/TicketPrime.Api/obj/Debug/net8.0/ref/TicketPrime.Api.dll
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/appsettings.Development.json
-/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api.staticwebassets.endpoints.json
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/appsettings.json
+/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api.staticwebassets.endpoints.json
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api.deps.json
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api.runtimeconfig.json
