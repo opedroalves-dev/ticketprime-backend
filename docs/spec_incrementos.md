@@ -403,10 +403,19 @@ Então o sistema deve rejeitar a confirmação informando limite de CPF excedido
 
 Registrar o **histórico de preços** dos ingressos/lotes ao longo do tempo, permitindo que o usuário visualize a evolução dos preços e eventuais reajustes, promovendo transparência.
 
+**Novo:** Endpoint de simulação de preço (`POST /api/reservas/simular-preco`) que exibe de forma transparente o PrecoBase, TaxaServico, ValorDesconto e ValorFinal sem criar reserva.
+
 ### 6.2. Regras de Negócio
 
 | # | Regra |
 |---|-------|
+| RN05.0 | O endpoint `POST /api/reservas/simular-preco` deve retornar a discriminação completa dos valores: PrecoBase, TaxaServico, ValorDesconto e ValorFinal. |
+| RN05.0.1 | **PrecoBase** = `Evento.PrecoPadrao` — valor base do ingresso. |
+| RN05.0.2 | **TaxaServico** = `PrecoBase × 0,10` — taxa de serviço de 10% sobre o PrecoBase (regra simples e documentada). |
+| RN05.0.3 | **ValorDesconto** = aplicado conforme regra oficial de cupom: somente se o cupom existir E `PrecoBase >= ValorMinimoRegra`. |
+| RN05.0.4 | **ValorFinal** = `PrecoBase + TaxaServico - ValorDesconto` — valor total a pagar. |
+| RN05.0.5 | O endpoint **não insere** reserva (apenas simulação). |
+| RN05.0.6 | A regra oficial de cupom **não foi alterada**. |
 | RN05.1 | Toda vez que o preço de um lote ou o `PrecoPadrao` de um evento for alterado, o valor anterior deve ser registrado no histórico. |
 | RN05.2 | O histórico deve conter: preço anterior, preço novo, data da alteração e motivo opcional. |
 | RN05.3 | O histórico é **apenas de leitura** via API (sem DELETE ou UPDATE). |
@@ -416,6 +425,7 @@ Registrar o **histórico de preços** dos ingressos/lotes ao longo do tempo, per
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
+| `POST` | `/api/reservas/simular-preco` | **Novo** Simular preço de reserva com transparência (não insere reserva) |
 | `GET` | `/api/eventos/{eventoId}/historico-precos` | Histórico de preços de um evento (inclui lotes) |
 | `GET` | `/api/lotes/{loteId}/historico-precos` | Histórico de preços de um lote específico |
 

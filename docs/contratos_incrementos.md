@@ -819,6 +819,84 @@ Body: **nenhum**. Opcionalmente pode aceitar um cupom no body:
 
 ## 6. RF05 — Transparência de Preço
 
+### 6.0. Simular preço de reserva/ingresso
+
+Endpoint de simulação que retorna a discriminação completa dos valores (PrecoBase, TaxaServico, ValorDesconto, ValorFinal) sem criar reserva.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `POST` |
+| **Rota** | `/api/reservas/simular-preco` |
+| **Objetivo** | Simular o preço de uma reserva com transparência total dos valores |
+
+#### Request
+
+```
+POST /api/reservas/simular-preco
+Content-Type: application/json
+
+{
+    "UsuarioCpf": "12345678901",
+    "EventoId": 1,
+    "CupomUtilizado": "DESCONTO10"
+}
+```
+
+#### Regras de Cálculo
+
+| Campo | Fórmula | Descrição |
+|-------|---------|-----------|
+| `PrecoBase` | `Evento.PrecoPadrao` | Preço base do ingresso (PrecoPadrao do Evento) |
+| `TaxaServico` | `PrecoBase × 0,10` | 10% sobre o PrecoBase (regra simples e documentada) |
+| `ValorDesconto` | `PrecoBase × (PorcentagemDesconto / 100)` | Desconto do cupom, aplicado somente se cupom existir E `PrecoBase >= ValorMinimoRegra` |
+| `ValorFinal` | `PrecoBase + TaxaServico - ValorDesconto` | Valor total a pagar |
+
+> **Nota:** A regra de cupom não foi alterada. O desconto só é aplicado quando `PrecoPadrao >= ValorMinimoRegra`, conforme o comportamento oficial.
+
+#### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| CPF é obrigatório | 400 | `"CPF do usuário é obrigatório."` |
+| CPF deve ter 11 dígitos | 400 | `"CPF deve conter 11 dígitos numéricos."` |
+| EventoId deve ser maior que zero | 400 | `"EventoId deve ser maior que zero."` |
+| Evento deve existir | 404 | `"Evento não encontrado para o Id informado."` |
+
+#### Response: 200 OK (sem cupom)
+
+```json
+{
+    "PrecoBase": 150.00,
+    "TaxaServico": 15.00,
+    "ValorDesconto": 0.00,
+    "ValorFinal": 165.00
+}
+```
+
+#### Response: 200 OK (com cupom válido)
+
+```json
+{
+    "PrecoBase": 150.00,
+    "TaxaServico": 15.00,
+    "ValorDesconto": 15.00,
+    "ValorFinal": 150.00
+}
+```
+
+#### Response: 200 OK (cupom não aplicado por ValorMinimoRegra)
+
+```json
+{
+    "PrecoBase": 80.00,
+    "TaxaServico": 8.00,
+    "ValorDesconto": 0.00,
+    "ValorFinal": 88.00
+}
+```
+
+---
+
 ### 6.1. Histórico de preços do evento
 
 Retorna o histórico de alterações de preço de um evento.
@@ -1224,6 +1302,19 @@ public class ConfirmarCarrinhoRequest
 }
 ```
 
+#### SimulacaoPrecoRequest
+
+Usado em: `POST /api/reservas/simular-preco`
+
+```csharp
+public class SimulacaoPrecoRequest
+{
+    public string UsuarioCpf { get; set; } = string.Empty;
+    public int EventoId { get; set; }
+    public string? CupomUtilizado { get; set; }
+}
+```
+
 ### 8.2. Response models
 
 #### LoteResponse
@@ -1566,10 +1657,25 @@ public class AdminReservaResponse
 }
 ```
 
+#### SimulacaoPrecoResponse
+
+Usado em: `POST /api/reservas/simular-preco`
+
+```csharp
+public class SimulacaoPrecoResponse
+{
+    public decimal PrecoBase { get; set; }
+    public decimal TaxaServico { get; set; }
+    public decimal ValorDesconto { get; set; }
+    public decimal ValorFinal { get; set; }
+}
+```
+
 ## Histórico de Revisões
 
 | Versão | Data | Descrição |
 |--------|------|-----------|
+| 1.8.0 | 2026-05-27 | 8ª revisão: adicionado endpoint POST /api/reservas/simular-preco (seção 6.0) com transparência de preço (PrecoBase, TaxaServico, ValorDesconto, ValorFinal); adicionados modelos SimulacaoPrecoRequest (8.1) e SimulacaoPrecoResponse (8.2) |
 | 1.7.0 | 2026-05-27 | 7ª revisão: adicionados TipoIngressoId (int?) e NomeLote (string?) ao HistoricoPrecoResponse para identificar alterações de lote no histórico do evento; JSON 6.1 atualizado com registros de lote; adicionados modelos LoteResponse e LoteListaResponse na seção 8.2; adicionada nota sobre limitação da view vw_DashboardEventos na seção RF06 |
 | 1.6.0 | 2026-05-27 | 6ª revisão: removido endpoint /api/admin/reservas/hoje e modelos AdminReservasHojeResponse/AdminReservaHojeItem (tabela Reservas não possui coluna DataReserva); removido campo DataReserva de AdminReservaResponse; corrigida inconsistência numérica ReceitaTotal 30000→36750 (45×300 + 155×150 = 36750) |
 | 1.5.0 | 2026-05-27 | 5ª revisão: CarrinhoItemResponse.TipoIngressoId alterado de int para int? (SQL CarrinhoItens.TipoIngressoId é NULL); NomeLote alterado para string? (null se TipoIngressoId for null); CheckInItemResponse.TipoIngresso alterado para string? (null se ingresso sem lote) |

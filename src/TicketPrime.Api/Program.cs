@@ -556,6 +556,83 @@ app.MapPost("/api/reservas", async (IDbConnection db, [FromBody] ReservaRequest 
     return Results.Created($"/api/reservas/{reservaId}", reservaResponse);
 });
 
+// ==========================================================
+// RF05 — TRANSPARÊNCIA DE PREÇO: Simulador de Preço
+// ==========================================================
+// Endpoint de simulação que Exibe PrecoBase, TaxaServico,
+// ValorDesconto e ValorFinal sem criar reserva.
+//
+// Regras:
+//   - PrecoBase   = PrecoPadrao do Evento
+//   - TaxaServico = PrecoBase × 0,10 (10% sobre o PrecoBase)
+//   - ValorDesconto = PrecoBase × (PorcentagemDesconto / 100)
+//                     Aplicado somente se cupom existir E
+//                     PrecoBase >= ValorMinimoRegra do cupom
+//   - ValorFinal  = PrecoBase + TaxaServico - ValorDesconto
+//
+// NÃO insere reserva (apenas simulação).
+// NÃO altera a regra oficial de cupom.
+// ==========================================================
+
+app.MapPost("/api/reservas/simular-preco", async (IDbConnection db, [FromBody] SimulacaoPrecoRequest request) =>
+{
+    // Validações de entrada
+    if (string.IsNullOrWhiteSpace(request.UsuarioCpf))
+        return Results.BadRequest(new { erro = "CPF do usuário é obrigatório." });
+
+    if (request.UsuarioCpf.Length != 11 || !request.UsuarioCpf.All(char.IsDigit))
+        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
+
+    if (request.EventoId <= 0)
+        return Results.BadRequest(new { erro = "EventoId deve ser maior que zero." });
+
+    // Buscar evento para obter PrecoPadrao
+    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
+        new { Id = request.EventoId });
+
+    if (evento is null)
+        return Results.NotFound(new { erro = "Evento não encontrado para o Id informado." });
+
+    // Calcular PrecoBase (PrecoPadrao do Evento)
+    decimal precoBase = evento.PrecoPadrao;
+
+    // Calcular TaxaServico (10% do PrecoBase — regra simples e documentada)
+    decimal taxaServico = Math.Round(precoBase * 0.10m, 2);
+
+    // Calcular ValorDesconto com base no cupom (regra oficial)
+    decimal valorDesconto = 0;
+
+    if (!string.IsNullOrWhiteSpace(request.CupomUtilizado))
+    {
+        var cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
+            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
+            new { Codigo = request.CupomUtilizado });
+
+        if (cupom is not null)
+        {
+            // Aplica desconto somente se PrecoBase >= ValorMinimoRegra (regra oficial)
+            if (precoBase >= cupom.ValorMinimoRegra)
+            {
+                valorDesconto = Math.Round(precoBase * cupom.PorcentagemDesconto / 100m, 2);
+            }
+        }
+    }
+
+    // Calcular ValorFinal = PrecoBase + TaxaServico - ValorDesconto
+    decimal valorFinal = precoBase + taxaServico - valorDesconto;
+
+    var response = new SimulacaoPrecoResponse
+    {
+        PrecoBase = precoBase,
+        TaxaServico = taxaServico,
+        ValorDesconto = valorDesconto,
+        ValorFinal = valorFinal
+    };
+
+    return Results.Ok(response);
+});
+
 app.MapGet("/api/eventos", async (IDbConnection db) =>
 {
     const string sql = "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos";
