@@ -45,8 +45,10 @@ O **TicketPrime** é uma API backend acadêmica para venda de ingressos, cadastr
 │           └── Usuario.cs
 ├── tests/
 │   └── TicketPrime.Tests/
-│       ├── ModelsTests.cs
-│       ├── RequestTests.cs
+│       ├── CupomValidationTests.cs
+│       ├── EventoValidationTests.cs
+│       ├── ReservaServiceTests.cs
+│       ├── UsuarioValidationTests.cs
 │       └── TicketPrime.Tests.csproj
 ├── TicketPrime.sln
 └── README.md

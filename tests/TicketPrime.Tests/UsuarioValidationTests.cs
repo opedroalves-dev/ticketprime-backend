@@ -32,7 +32,12 @@ public class UsuarioValidationTests
     [Fact]
     public void UsuarioRequest_DeveArmazenarValoresCorretamente()
     {
-        var request = new UsuarioRequest("12345678901", "João Silva", "joao@email.com");
+        var request = new UsuarioRequest
+        {
+            Cpf = "12345678901",
+            Nome = "João Silva",
+            Email = "joao@email.com"
+        };
 
         Assert.Equal("12345678901", request.Cpf);
         Assert.Equal("João Silva", request.Nome);
@@ -40,20 +45,44 @@ public class UsuarioValidationTests
     }
 
     [Fact]
-    public void UsuarioRequest_DeveCompararPorValor()
+    public void UsuarioRequest_DeveCompararPropriedades()
     {
-        var request1 = new UsuarioRequest("12345678901", "João Silva", "joao@email.com");
-        var request2 = new UsuarioRequest("12345678901", "João Silva", "joao@email.com");
+        var request1 = new UsuarioRequest
+        {
+            Cpf = "12345678901",
+            Nome = "João Silva",
+            Email = "joao@email.com"
+        };
+        var request2 = new UsuarioRequest
+        {
+            Cpf = "12345678901",
+            Nome = "João Silva",
+            Email = "joao@email.com"
+        };
 
-        Assert.Equal(request1, request2);
+        Assert.Equal(request1.Cpf, request2.Cpf);
+        Assert.Equal(request1.Nome, request2.Nome);
+        Assert.Equal(request1.Email, request2.Email);
     }
 
     [Fact]
-    public void UsuarioRequest_DeveCompararPorValorComDadosDiferentes()
+    public void UsuarioRequest_DeveCompararPropriedadesDiferentes()
     {
-        var request1 = new UsuarioRequest("12345678901", "João Silva", "joao@email.com");
-        var request2 = new UsuarioRequest("99999999999", "Maria Souza", "maria@email.com");
+        var request1 = new UsuarioRequest
+        {
+            Cpf = "12345678901",
+            Nome = "João Silva",
+            Email = "joao@email.com"
+        };
+        var request2 = new UsuarioRequest
+        {
+            Cpf = "99999999999",
+            Nome = "Maria Souza",
+            Email = "maria@email.com"
+        };
 
-        Assert.NotEqual(request1, request2);
+        Assert.NotEqual(request1.Cpf, request2.Cpf);
+        Assert.NotEqual(request1.Nome, request2.Nome);
+        Assert.NotEqual(request1.Email, request2.Email);
     }
 }

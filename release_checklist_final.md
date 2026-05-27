@@ -67,7 +67,7 @@ Checklist de verificação para entrega da AV2, elaborado com base no estado rea
 - [x] [`tests/TicketPrime.Tests/EventoValidationTests.cs`](tests/TicketPrime.Tests/EventoValidationTests.cs) — 3 testes (valores padrão, atribuição de propriedades, valores do request)
 - [x] [`tests/TicketPrime.Tests/CupomValidationTests.cs`](tests/TicketPrime.Tests/CupomValidationTests.cs) — 5 testes (valores padrão, atribuição de propriedades, valores do request, comparação, códigos diferentes)
 - [x] [`tests/TicketPrime.Tests/UsuarioValidationTests.cs`](tests/TicketPrime.Tests/UsuarioValidationTests.cs) — 5 testes (valores padrão, atribuição de propriedades, valores do request, comparação, propriedades diferentes)
-- [x] [`tests/TicketPrime.Tests/ReservaServiceTests.cs`](tests/TicketPrime.Tests/ReservaServiceTests.cs) — 13 testes (CPF inexistente, evento inexistente, limite de 2 reservas por CPF/evento, capacidade esgotada, vagas disponíveis, regra de valor mínimo do cupom, cálculo de valor final com e sem cupom, resposta com nome do evento, evento inexistente na resposta)
+- [x] [`tests/TicketPrime.Tests/ReservaServiceTests.cs`](tests/TicketPrime.Tests/ReservaServiceTests.cs) — 26 testes (CPF inexistente, evento inexistente, limite de 2 reservas por CPF/evento, capacidade esgotada, vagas disponíveis, regra de valor mínimo do cupom, cálculo de valor final com e sem cupom, resposta com nome do evento, evento inexistente na resposta)
 
 ---
 
@@ -122,7 +122,7 @@ Checklist de verificação para entrega da AV2, elaborado com base no estado rea
 | Documentação | 4 | 4 |
 | Endpoints AV1 | 4 | 4 |
 | Endpoints AV2 | 2 | 2 |
-| Testes xUnit | 4 arquivos / ~26 testes | 4 / ~26 |
+| Testes xUnit | 4 arquivos / 39 testes | 4 / 39 |
 | Restrições técnicas | 5 | 5 |
 | **Total** | **24** | **24** |
 

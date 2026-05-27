@@ -143,3 +143,4 @@
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/obj/Debug/net8.0/TicketPrime.Api.pdb
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/obj/Debug/net8.0/TicketPrime.Api.genruntimeconfig.cache
 /home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/obj/Debug/net8.0/ref/TicketPrime.Api.dll
+/home/pedro/Downloads/ticketprime-backend/src/TicketPrime.Api/bin/Debug/net8.0/TicketPrime.Api.staticwebassets.runtime.json

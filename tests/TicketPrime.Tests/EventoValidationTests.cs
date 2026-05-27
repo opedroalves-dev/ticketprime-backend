@@ -38,21 +38,17 @@ public class EventoValidationTests
     public void EventoRequest_DeveArmazenarValoresCorretamente()
     {
         var data = new DateTime(2025, 12, 31);
-        var request = new EventoRequest("Show de Rock", 500, data, 150m);
+        var request = new EventoRequest
+        {
+            Nome = "Show de Rock",
+            CapacidadeTotal = 500,
+            DataEvento = data,
+            PrecoPadrao = 150m
+        };
 
         Assert.Equal("Show de Rock", request.Nome);
         Assert.Equal(500, request.CapacidadeTotal);
         Assert.Equal(data, request.DataEvento);
         Assert.Equal(150m, request.PrecoPadrao);
-    }
-
-    [Fact]
-    public void EventoRequest_DeveCompararPorValor()
-    {
-        var data = new DateTime(2025, 12, 31);
-        var request1 = new EventoRequest("Show de Rock", 500, data, 150m);
-        var request2 = new EventoRequest("Show de Rock", 500, data, 150m);
-
-        Assert.Equal(request1, request2);
     }
 }

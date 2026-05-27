@@ -53,7 +53,17 @@ public class ReservaService
         if (reservasEvento >= evento.CapacidadeTotal)
             return ResultadoReserva.Fail("Evento lotado. Não há ingressos disponíveis.");
 
-        // 5. Calcular valor final
+        // 5. Validar se o cupom informado existe na base
+        if (!string.IsNullOrWhiteSpace(codigoCupom))
+        {
+            var cupom = cupons.FirstOrDefault(c =>
+                c.Codigo.Equals(codigoCupom, StringComparison.OrdinalIgnoreCase));
+
+            if (cupom is null)
+                return ResultadoReserva.Fail("Cupom não encontrado.");
+        }
+
+        // 6. Calcular valor final
         decimal valorFinal = CalcularValorFinal(evento.PrecoPadrao, codigoCupom, cupons);
 
         return ResultadoReserva.Ok(valorFinal, codigoCupom);
