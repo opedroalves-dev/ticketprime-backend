@@ -2020,6 +2020,122 @@ app.MapGet("/api/admin/reservas", async (IDbConnection db,
 });
 
 // ==========================================================
+// ENDPOINTS ADMINISTRATIVOS DE CONSULTA
+// ==========================================================
+
+// 8.1. Resumo do evento
+app.MapGet("/api/admin/eventos/{eventoId}/resumo", async (IDbConnection db, int eventoId) =>
+{
+    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
+        new { Id = eventoId });
+
+    if (evento is null)
+        return Results.NotFound(new { erro = "Evento não encontrado." });
+
+    var sql = @"
+        SELECT
+            e.Id              AS EventoId,
+            e.Nome            AS NomeEvento,
+            e.DataEvento,
+            e.CapacidadeTotal,
+            ISNULL(COUNT(DISTINCT r.Id), 0)                                                AS TotalReservas,
+            e.CapacidadeTotal - ISNULL(SUM(CASE
+                WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN 1 ELSE 0
+            END), 0)                                                                        AS IngressosDisponiveis,
+            ISNULL(SUM(CASE
+                WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN ig.ValorFinal ELSE 0
+            END), 0.00)                                                                     AS ReceitaTotal,
+            ISNULL(COUNT(DISTINCT ci.Id), 0)                                                AS TotalCheckIns
+        FROM Eventos e
+        LEFT JOIN Reservas r ON r.EventoId = e.Id
+        LEFT JOIN Ingressos ig ON ig.ReservaId = r.Id
+        LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
+        WHERE e.Id = @EventoId
+        GROUP BY e.Id, e.Nome, e.DataEvento, e.CapacidadeTotal";
+
+    var resumo = await db.QuerySingleAsync<EventoResumoResponse>(sql, new { EventoId = eventoId });
+
+    return Results.Ok(resumo);
+});
+
+// 8.2. Listar check-ins de um evento (admin)
+app.MapGet("/api/admin/eventos/{eventoId}/checkins", async (IDbConnection db, int eventoId) =>
+{
+    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
+        new { Id = eventoId });
+
+    if (evento is null)
+        return Results.NotFound(new { erro = "Evento não encontrado." });
+
+    var sql = @"
+        SELECT ci.Id, ci.IngressoId, i.CodigoUnico, u.Nome AS NomeUsuario,
+               u.Cpf AS UsuarioCpf, ti.Nome AS TipoIngresso, ci.DataCheckIn
+        FROM CheckIns ci
+        INNER JOIN Ingressos i ON i.Id = ci.IngressoId
+        INNER JOIN Reservas r ON r.Id = i.ReservaId
+        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
+        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
+        WHERE r.EventoId = @EventoId
+        ORDER BY ci.DataCheckIn DESC";
+
+    var checkins = (await db.QueryAsync<CheckInItemResponse>(sql, new { EventoId = eventoId })).AsList();
+
+    var response = new CheckInListResponse
+    {
+        EventoId = eventoId,
+        NomeEvento = evento.Nome,
+        TotalCheckIns = checkins.Count,
+        CheckIns = checkins
+    };
+
+    return Results.Ok(response);
+});
+
+// 8.3. Listar reservas de um evento (admin)
+app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (IDbConnection db, int eventoId) =>
+{
+    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+        "SELECT Id FROM Eventos WHERE Id = @Id",
+        new { Id = eventoId });
+
+    if (evento is null)
+        return Results.NotFound(new { erro = "Evento não encontrado." });
+
+    var sql = @"
+        SELECT
+            r.Id                     AS ReservaId,
+            r.UsuarioCpf,
+            u.Nome                   AS NomeUsuario,
+            r.EventoId,
+            e.Nome                   AS NomeEvento,
+            e.DataEvento,
+            i.Id                     AS IngressoId,
+            i.CodigoUnico,
+            i.Status                 AS StatusIngresso,
+            ti.Nome                  AS TipoIngresso,
+            i.ValorBruto,
+            i.ValorDesconto,
+            i.TaxaServico,
+            i.ValorFinal,
+            r.CupomUtilizado,
+            CASE WHEN ci.Id IS NOT NULL THEN 1 ELSE 0 END AS CheckInRealizado
+        FROM Reservas r
+        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
+        INNER JOIN Eventos e ON e.Id = r.EventoId
+        LEFT JOIN Ingressos i ON i.ReservaId = r.Id
+        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
+        LEFT JOIN CheckIns ci ON ci.IngressoId = i.Id
+        WHERE r.EventoId = @EventoId
+        ORDER BY r.Id DESC";
+
+    var reservas = await db.QueryAsync<AdminReservaResponse>(sql, new { EventoId = eventoId });
+
+    return Results.Ok(reservas);
+});
+
+// ==========================================================
 // MÉTODOS AUXILIARES
 // ==========================================================
 
