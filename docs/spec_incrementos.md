@@ -1,7 +1,7 @@
 # Spec: Incrementos do TicketPrime
 
 > **Documento:** Especificação de novos recursos (Spec-Driven Development)
-> **Versão:** 1.0.0
+> **Versão:** 1.5.0
 > **Baseado em:** [`docs/requisitos.md`](docs/requisitos.md) (requisitos obrigatórios do professor)
 > **Stack:** .NET 8, Minimal API, Dapper, SQL Server, xUnit
 
@@ -50,11 +50,11 @@ Os novos recursos **complementam** os requisitos obrigatórios sem quebrá-los:
 
 | Recurso Novo | Impacto em Tabelas Existentes | Impacto em Endpoints Existentes |
 |---|---|---|
-| RF01 — Ingresso Digital | Adiciona coluna `CodigoUnico` em `Reservas` | Nenhum (novos endpoints) |
-| RF02 — Check-in | Cria tabela `CheckIns` | Nenhum (novos endpoints) |
-| RF03 — Tipos/Lotes | Cria tabela `LotesIngresso` + FK em `Reservas` | Nenhum (novos endpoints) |
-| RF04 — Carrinho | Cria tabela `CarrinhoReservas` | Nenhum (novos endpoints) |
-| RF05 — Transparência | Cria tabela `HistoricoPrecos` | Nenhum (novos endpoints) |
+| RF01 — Ingresso Digital | Cria tabela `Ingressos` (FK → `Reservas`, FK → `TiposIngresso`) | Nenhum (novos endpoints) |
+| RF02 — Check-in | Cria tabela `CheckIns` (FK → `Ingressos`) | Nenhum (novos endpoints) |
+| RF03 — Tipos/Lotes | Cria tabela `TiposIngresso` (FK → `Eventos`) | Nenhum (novos endpoints) |
+| RF04 — Carrinho | Cria tabelas `Carrinhos` + `CarrinhoItens` (FK → `Usuarios`, `Eventos`, `TiposIngresso`) | Nenhum (novos endpoints) |
+| RF05 — Transparência | Cria tabela `HistoricoPrecos` (FK → `Eventos`, `TiposIngresso`) | Nenhum (novos endpoints) |
 | RF06 — Dashboard | Apenas consultas (`SELECT`) | Nenhum (novos endpoints) |
 
 ---
@@ -74,44 +74,36 @@ Gerar um **código único alfanumérico** para cada ingresso (reserva) no moment
 | RN01.3 | O código deve ser **único em toda a base** (coluna com UNIQUE CONSTRAINT). |
 | RN01.4 | Se houver colisão (raro), o sistema deve regenerar o código automaticamente. |
 | RN01.5 | O código deve ser exibido ao usuário na resposta da reserva e no endpoint de consulta. |
-| RN01.6 | A reserva existente migra para `status = 'Confirmada'` no mesmo ato. |
+| RN01.6 | O ingresso gerado assume `Status = 'Confirmada'` no mesmo ato. |
+| | |
+| | **Nota — Fluxos de geração:** O ingresso digital pode ser gerado por dois fluxos: |
+| | **(a)** Automático: via confirmação do carrinho (RF04), que gera reserva + ingresso em uma única operação. |
+| | **(b)** Manual: via `POST /api/reservas/{id}/ingresso` para reservas existentes que ainda não possuem ingresso (migração/retrocompatibilidade). |
 
 ### 2.3. Endpoints Previstos
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `POST` | `/api/reservas/{id}/ingresso` | Obter os dados do ingresso digital de uma reserva |
-| `GET` | `/api/ingressos/{codigo}` | Consultar ingresso pelo código único (validação) |
+| `POST` | `/api/reservas/{id}/ingresso` | Gerar o ingresso digital com código único para uma reserva existente |
+| `GET` | `/api/reservas/{id}/ingresso` | Consultar o ingresso digital associado a uma reserva |
+| `GET` | `/api/ingressos/{codigo}` | Consultar ingresso pelo código único (validação na entrada) |
 
 ### 2.4. Tabelas Necessárias
 
-**Alteração na tabela `Reservas`** (adicionar colunas — nomes existentes são preservados):
+**Nova tabela `Ingressos`** — representa o ingresso digital vinculado a uma reserva existente:
 
-```sql
--- Adicionar colunas à tabela Reservas (sem remover colunas existentes)
-ALTER TABLE Reservas
-    ADD CodigoUnico VARCHAR(8) NULL,
-        StatusReserva VARCHAR(20) NOT NULL DEFAULT 'Confirmada';
-
--- UNIQUE constraint após popular dados existentes
-CREATE UNIQUE INDEX IX_Reservas_CodigoUnico ON Reservas(CodigoUnico)
-    WHERE CodigoUnico IS NOT NULL;
-```
-
-**Nova tabela (opcional — log de acesso ao ingresso):**
-
-```sql
-CREATE TABLE LogAcessoIngressos (
-    Id          INT IDENTITY(1,1)   NOT NULL,
-    ReservaId   INT                 NOT NULL,
-    CodigoUnico VARCHAR(8)          NOT NULL,
-    DataAcesso  DATETIME            NOT NULL DEFAULT GETDATE(),
-    IpAcesso    VARCHAR(45)         NULL,
-    CONSTRAINT PK_LogAcessoIngressos PRIMARY KEY (Id),
-    CONSTRAINT FK_LogAcessoIngressos_Reservas FOREIGN KEY (ReservaId)
-        REFERENCES Reservas(Id)
-);
-```
+| Coluna | Tipo | Restrições |
+|--------|------|------------|
+| `Id` | INT IDENTITY | PK |
+| `ReservaId` | INT | FK → `Reservas(Id)`, NOT NULL |
+| `TipoIngressoId` | INT | FK → `TiposIngresso(Id)`, NULL (migração) |
+| `CodigoUnico` | VARCHAR(8) | UNIQUE, CHECK LEN = 8 |
+| `Status` | VARCHAR(20) | CHECK ('Confirmada','Utilizada','Cancelada'), DEFAULT 'Confirmada' |
+| `ValorBruto` | DECIMAL(10,2) | NOT NULL |
+| `ValorDesconto` | DECIMAL(10,2) | DEFAULT 0.00 |
+| `TaxaServico` | DECIMAL(10,2) | DEFAULT 0.00 |
+| `ValorFinal` | DECIMAL(10,2) | NOT NULL |
+| `DataCriacao` | DATETIME | DEFAULT GETDATE() |
 
 ### 2.5. Critérios de Aceite
 
@@ -143,7 +135,7 @@ Então o sistema deve retornar erro 404 com mensagem "Ingresso não encontrado"
 |-------|---------------|---------|-----------|
 | Colisão na geração do código | Muito Baixa | Médio | Loop de regeneração + UNIQUE INDEX |
 | Performance em consultas por código | Baixa | Baixo | Índice único na coluna `CodigoUnico` |
-| Alteração acidental do endpoint POST /api/reservas | Média | Alto | A geração do código deve ser feita **dentro** do endpoint existente sem quebrar a assinatura |
+| Novo endpoint POST /api/reservas/{id}/ingresso pode quebrar se a reserva não existir | Baixa | Médio | Validar existência da reserva antes de gerar o ingresso |
 
 ---
 
@@ -157,11 +149,11 @@ Permitir que o organizador do evento realize o **check-in** do portador do ingre
 
 | # | Regra |
 |---|-------|
-| RN02.1 | O check-in só pode ser realizado se o ingresso existir e estiver com `StatusReserva = 'Confirmada'`. |
+| RN02.1 | O check-in só pode ser realizado se o ingresso existir e estiver com `Ingressos.Status = 'Confirmada'`. |
 | RN02.2 | Cada ingresso só pode ter **um único check-in** (impedir reuso). |
 | RN02.3 | O check-in deve registrar a data/hora exata da validação. |
 | RN02.4 | O check-in pode ser feito por qualquer pessoa que possua o código único (simulação de porteiro/organizador). |
-| RN02.5 | Após o check-in, o status da reserva passa para `'Utilizada'`. |
+| RN02.5 | Após o check-in, o status do ingresso passa para `'Utilizada'`. |
 
 ### 3.3. Endpoints Previstos
 
@@ -176,13 +168,12 @@ Permitir que o organizador do evento realize o **check-in** do portador do ingre
 ```sql
 CREATE TABLE CheckIns (
     Id          INT IDENTITY(1,1)   NOT NULL,
-    ReservaId   INT                 NOT NULL,
-    CodigoUnico VARCHAR(8)          NOT NULL,
+    IngressoId  INT                 NOT NULL,
     DataCheckIn DATETIME            NOT NULL DEFAULT GETDATE(),
     CONSTRAINT PK_CheckIns PRIMARY KEY (Id),
-    CONSTRAINT UQ_CheckIns_ReservaId UNIQUE (ReservaId),  -- um check-in por reserva
-    CONSTRAINT FK_CheckIns_Reservas FOREIGN KEY (ReservaId)
-        REFERENCES Reservas(Id)
+    CONSTRAINT UQ_CheckIns_IngressoId UNIQUE (IngressoId),  -- um check-in por ingresso
+    CONSTRAINT FK_CheckIns_Ingressos FOREIGN KEY (IngressoId)
+        REFERENCES Ingressos(Id)
 );
 ```
 
@@ -193,7 +184,7 @@ CREATE TABLE CheckIns (
 Dado que existe um ingresso confirmado com código "ABC123XY"
 Quando o organizador realizar o check-in com este código
 Então o sistema deve registrar o check-in com data/hora atual
-E o status da reserva deve ser alterado para "Utilizada"
+E o status do ingresso deve ser alterado para "Utilizada"
 ```
 
 **Cenário 2: Check-in duplicado (reuso)**
@@ -237,13 +228,12 @@ Permitir que um evento tenha **múltiplos lotes/tipos de ingresso** (ex.: Pista,
 | # | Regra |
 |---|-------|
 | RN03.1 | Um evento pode ter **um ou mais lotes** de ingresso. |
-| RN03.2 | Cada lote possui: nome, preço, capacidade máxima, data de início e fim de venda. |
-| RN03.3 | A `CapacidadeTotal` do evento é a **soma das capacidades** de todos os seus lotes. |
-| RN03.4 | Uma reserva deve estar associada a **um lote específico**. |
-| RN03.5 | O controle de capacidade por CPF (limite 2) continua valendo **por evento**, não por lote. |
-| RN03.6 | O `PrecoPadrao` do evento é mantido como referência (pode ser a média ou o menor preço). |
-| RN03.7 | Lotes podem ser criados **após** o evento já existir. |
-| RN03.8 | Se um evento não tiver lotes cadastrados, o comportamento antigo (reserva direta sem lote) deve ser preservado para compatibilidade — **ou** assumir lote único implícito com `PrecoPadrao`. |
+| RN03.2 | Cada lote possui: nome, preço, capacidade máxima, taxa de serviço, data de início e fim de venda. |
+| RN03.3 | Uma reserva deve estar associada a **um lote específico**. |
+| RN03.4 | O controle de capacidade por CPF (limite 2) continua valendo **por evento**, não por lote. |
+| RN03.5 | O `PrecoPadrao` do evento é mantido como referência (pode ser a média ou o menor preço). |
+| RN03.6 | Lotes podem ser criados **após** o evento já existir. |
+| RN03.7 | Se um evento não tiver lotes cadastrados, o comportamento antigo (reserva direta sem lote) deve ser preservado para compatibilidade — **ou** assumir lote único implícito com `PrecoPadrao`. |
 
 ### 4.3. Endpoints Previstos
 
@@ -253,35 +243,27 @@ Permitir que um evento tenha **múltiplos lotes/tipos de ingresso** (ex.: Pista,
 | `GET` | `/api/eventos/{eventoId}/lotes` | Listar lotes de um evento |
 | `GET` | `/api/lotes/{loteId}` | Obter dados de um lote específico |
 | `PUT` | `/api/lotes/{loteId}` | Atualizar preço/capacidade de um lote |
-| `DELETE` | `/api/lotes/{loteId}` | Remover lote (se não houver reservas vinculadas) |
+| `DELETE` | `/api/lotes/{loteId}` | Remover lote (se não houver ingressos vinculados) |
 
 ### 4.4. Tabelas Necessárias
 
 ```sql
-CREATE TABLE LotesIngresso (
+CREATE TABLE TiposIngresso (
     Id              INT IDENTITY(1,1)   NOT NULL,
     EventoId        INT                 NOT NULL,
     Nome            VARCHAR(100)        NOT NULL,
     Preco           DECIMAL(10,2)       NOT NULL,
     Capacidade      INT                 NOT NULL,
+    TaxaServico     DECIMAL(10,2)       NOT NULL DEFAULT 0.00,
     DataInicioVenda DATETIME            NOT NULL,
     DataFimVenda    DATETIME            NOT NULL,
-    CONSTRAINT PK_LotesIngresso PRIMARY KEY (Id),
-    CONSTRAINT FK_LotesIngresso_Eventos FOREIGN KEY (EventoId)
+    CONSTRAINT PK_TiposIngresso PRIMARY KEY (Id),
+    CONSTRAINT FK_TiposIngresso_Eventos FOREIGN KEY (EventoId)
         REFERENCES Eventos(Id)
 );
 ```
 
-**Alteração na tabela `Reservas`** (adicionar FK opcional para `LotesIngresso`):
-
-```sql
-ALTER TABLE Reservas
-    ADD LoteId INT NULL;
-
-ALTER TABLE Reservas
-    ADD CONSTRAINT FK_Reservas_LotesIngresso FOREIGN KEY (LoteId)
-        REFERENCES LotesIngresso(Id);
-```
+**Sem alterações em tabelas existentes.** A FK entre ingresso e lote é feita via coluna `TipoIngressoId` na tabela `Ingressos` (RF01).
 
 ### 4.5. Critérios de Aceite
 
@@ -314,9 +296,9 @@ E o usuário pode optar por outro lote disponível
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |-------|---------------|---------|-----------|
-| Complexidade na migração de reservas existentes | Média | Médio | Coluna `LoteId` nullable; NULL = lote não definido |
-| Quebra do POST /api/reservas existente | Média | Alto | Manter compatibilidade: se `LoteId` não for informado, usar lote único implícito ou rejeitar |
-| Confusão entre CapacidadeTotal do evento e capacidade dos lotes | Média | Médio | Documentar claramente que CapacidadeTotal é independente; validar soma dos lotes ≤ CapacidadeTotal |
+| Complexidade na migração de reservas existentes | Média | Médio | Coluna `TipoIngressoId` nullable na tabela `Ingressos`; NULL = tipo de ingresso não definido (retrocompatibilidade) |
+| Quebra do POST /api/reservas existente | Média | Alto | Manter compatibilidade: se `TipoIngressoId` não for informado no ingresso, usar lote único implícito ou rejeitar |
+| Confusão entre CapacidadeTotal do evento e capacidade dos lotes | Média | Médio | Documentar claramente que CapacidadeTotal é independente dos lotes (não há soma automática) |
 
 ---
 
@@ -349,23 +331,26 @@ Permitir que o usuário adicione ingressos a um **carrinho temporário** com exp
 
 ### 5.4. Tabelas Necessárias
 
-```sql
-CREATE TABLE CarrinhoReservas (
-    Id              INT IDENTITY(1,1)   NOT NULL,
-    UsuarioCpf      VARCHAR(11)         NOT NULL,
-    EventoId        INT                 NOT NULL,
-    LoteId          INT                 NULL,
-    Quantidade      INT                 NOT NULL DEFAULT 1,
-    DataCriacao     DATETIME            NOT NULL DEFAULT GETDATE(),
-    DataExpiracao   DATETIME            NOT NULL,  -- GETDATE() + 15 min
-    Ativo           BIT                 NOT NULL DEFAULT 1,
-    CONSTRAINT PK_CarrinhoReservas PRIMARY KEY (Id),
-    CONSTRAINT FK_CarrinhoReservas_Usuarios FOREIGN KEY (UsuarioCpf)
-        REFERENCES Usuarios(Cpf),
-    CONSTRAINT FK_CarrinhoReservas_Eventos FOREIGN KEY (EventoId)
-        REFERENCES Eventos(Id)
-);
-```
+**Tabela `Carrinhos`** — sessão de compra temporária por CPF:
+
+| Coluna | Tipo | Restrições |
+|--------|------|------------|
+| `Id` | INT IDENTITY | PK |
+| `UsuarioCpf` | VARCHAR(11) | FK → `Usuarios(Cpf)`, NOT NULL |
+| `Status` | VARCHAR(20) | CHECK ('Ativo','Expirado','Confirmado'), DEFAULT 'Ativo' |
+| `DataCriacao` | DATETIME | DEFAULT GETDATE() |
+| `DataExpiracao` | DATETIME | NOT NULL (GETDATE() + 15 min) |
+
+**Tabela `CarrinhoItens`** — itens do carrinho:
+
+| Coluna | Tipo | Restrições |
+|--------|------|------------|
+| `Id` | INT IDENTITY | PK |
+| `CarrinhoId` | INT | FK → `Carrinhos(Id)`, NOT NULL |
+| `EventoId` | INT | FK → `Eventos(Id)`, NOT NULL |
+| `TipoIngressoId` | INT | FK → `TiposIngresso(Id)`, NULL |
+| `Quantidade` | INT | CHECK > 0, DEFAULT 1 |
+| `PrecoUnitario` | DECIMAL(10,2) | NOT NULL |
 
 ### 5.5. Critérios de Aceite
 
@@ -440,7 +425,7 @@ Registrar o **histórico de preços** dos ingressos/lotes ao longo do tempo, per
 CREATE TABLE HistoricoPrecos (
     Id              INT IDENTITY(1,1)   NOT NULL,
     EventoId        INT                 NULL,   -- NULL se for alteração de lote
-    LoteId          INT                 NULL,   -- NULL se for alteração de evento
+    TipoIngressoId  INT                 NULL,   -- NULL se for alteração de evento
     PrecoAnterior   DECIMAL(10,2)       NULL,   -- NULL na criação
     PrecoNovo       DECIMAL(10,2)       NOT NULL,
     DataAlteracao   DATETIME            NOT NULL DEFAULT GETDATE(),
@@ -448,8 +433,8 @@ CREATE TABLE HistoricoPrecos (
     CONSTRAINT PK_HistoricoPrecos PRIMARY KEY (Id),
     CONSTRAINT FK_HistoricoPrecos_Eventos FOREIGN KEY (EventoId)
         REFERENCES Eventos(Id),
-    CONSTRAINT FK_HistoricoPrecos_LotesIngresso FOREIGN KEY (LoteId)
-        REFERENCES LotesIngresso(Id)
+    CONSTRAINT FK_HistoricoPrecos_TiposIngresso FOREIGN KEY (TipoIngressoId)
+        REFERENCES TiposIngresso(Id)
 );
 ```
 
@@ -510,7 +495,6 @@ Fornecer endpoints de **dashboard e administração** para que organizadores aco
 | `GET` | `/api/admin/eventos/{eventoId}` | Dashboard detalhado de um evento |
 | `GET` | `/api/admin/eventos/{eventoId}/lotes` | Métricas por lote de um evento |
 | `GET` | `/api/admin/reservas` | Listar todas as reservas do sistema (admin) |
-| `GET` | `/api/admin/reservas/hoje` | Reservas realizadas hoje |
 
 ### 7.4. Tabelas Necessárias
 
@@ -518,7 +502,7 @@ Fornecer endpoints de **dashboard e administração** para que organizadores aco
 
 - [`Eventos`](db/scripts/001_CreateSchema.sql:30) — dados do evento
 - [`Reservas`](db/scripts/001_CreateSchema.sql:92) — contagem de vendas e receita
-- [`LotesIngresso`](#44-tabelas-necessárias) — métricas por lote (RF03)
+- [`TiposIngresso`](#44-tabelas-necessárias) — métricas por lote (RF03)
 - [`CheckIns`](#34-tabelas-necessárias) — check-ins realizados (RF02)
 
 ### 7.5. Critérios de Aceite
@@ -526,12 +510,12 @@ Fornecer endpoints de **dashboard e administração** para que organizadores aco
 **Cenário 1: Dashboard de evento com métricas**
 ```gherkin
 Dado que o evento "Show da Banda X" possui capacidade 500
-E tem 200 reservas confirmadas com receita total de R$ 30.000,00
+E tem 200 reservas confirmadas com receita total de R$ 36.750,00
 E 150 check-ins realizados
 Quando o administrador acessar o dashboard do evento
 Então o sistema deve retornar:
   - Total de ingressos vendidos: 200
-  - Receita total: R$ 30.000,00
+  - Receita total: R$ 36.750,00
   - Ocupação: 40%
   - Check-ins realizados: 150
   - Check-ins pendentes: 50
@@ -556,6 +540,7 @@ Então o sistema deve retornar métricas zeradas (0 ingressos, R$ 0,00 receita, 
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |-------|---------------|---------|-----------|
+| Limitação da view `vw_DashboardEventos` (LEFT JOIN via `TiposIngresso`) | Média | Baixo | Ingressos sem `TipoIngressoId` (migração) não aparecem nas métricas por lote; documentar nos contratos e considerar view alternativa via `Reservas` |
 | Performance com muitos eventos e reservas | Média | Médio | Índices nas colunas `EventoId` e `UsuarioCpf` da tabela Reservas |
 | Consultas complexas com múltiplos JOINs | Baixa | Baixo | Manter SQL simples; cenário acadêmico com volume reduzido |
 
@@ -572,7 +557,7 @@ Então o sistema deve retornar métricas zeradas (0 ingressos, R$ 0,00 receita, 
 | **Carrinho** | Conjunto temporário de itens (ingressos) com validade de 15 minutos, que reserva capacidade provisoriamente |
 | **Transparência de Preço** | Histórico público de alterações de preços de eventos e lotes |
 | **Dashboard** | Conjunto de métricas e indicadores para administração de eventos |
-| **StatusReserva** | Estado atual da reserva: `Confirmada`, `Utilizada`, `Cancelada` |
+| **Status do Ingresso** | Estado atual do ingresso digital (tabela `Ingressos`): `Confirmada`, `Utilizada`, `Cancelada` |
 
 ---
 
@@ -595,36 +580,30 @@ Então o sistema deve retornar métricas zeradas (0 ingressos, R$ 0,00 receita, 
 
 | Passo | Descrição | Dependências |
 |-------|-----------|--------------|
-| 1.1 | Criar script SQL: `db/scripts/003_LotesIngresso.sql` (tabela `LotesIngresso` + ALTER `Reservas`) | Nenhuma |
-| 1.2 | Criar model [`LoteIngresso.cs`](src/TicketPrime.Api/Models/) | Passo 1.1 |
-| 1.3 | Implementar endpoints de CRUD de lotes (RF03) | Passo 1.2 |
-| 1.4 | Criar script SQL: `db/scripts/004_CodigoUnico.sql` (ALTER `Reservas` + índice) | RF01 |
-| 1.5 | Modificar [`POST /api/reservas`](src/TicketPrime.Api/Program.cs:201) para gerar código único (sem quebrar assinatura) | Passo 1.4 |
-| 1.6 | Implementar endpoints de ingresso digital (RF01) | Passo 1.5 |
+| 1.1 | Criar script SQL incremental: [`db/ticketprime_incrementos.sql`](db/ticketprime_incrementos.sql) (tabelas `TiposIngresso`, `Ingressos`, `CheckIns`, `Carrinhos`, `CarrinhoItens`, `HistoricoPrecos`) | Nenhuma |
+| 1.2 | Implementar endpoints de CRUD de lotes (RF03) | Passo 1.1 |
+| 1.3 | Implementar endpoints de ingresso digital (RF01) | Passo 1.1, 1.2 |
+| 1.4 | Implementar endpoints de check-in (RF02) | Passo 1.1, 1.3 |
 
-### Fase 2 — Operação (RF02 + RF04)
+### Fase 2 — Operação (RF04)
 
 | Passo | Descrição | Dependências |
 |-------|-----------|--------------|
-| 2.1 | Criar script SQL: `db/scripts/005_CheckIns.sql` | Fase 1 |
-| 2.2 | Implementar endpoints de check-in (RF02) | Passo 2.1 |
-| 2.3 | Criar script SQL: `db/scripts/006_CarrinhoReservas.sql` | Fase 1 |
-| 2.4 | Implementar endpoints de carrinho (RF04) | Passo 2.3 |
+| 2.1 | Implementar endpoints de carrinho (RF04) | Passo 1.1 |
 
 ### Fase 3 — Transparência e Gestão (RF05 + RF06)
 
 | Passo | Descrição | Dependências |
 |-------|-----------|--------------|
-| 3.1 | Criar script SQL: `db/scripts/007_HistoricoPrecos.sql` | Fase 1 (RF03) |
-| 3.2 | Implementar endpoints de histórico de preços (RF05) | Passo 3.1 |
-| 3.3 | Implementar endpoints de dashboard/admin (RF06) | Fase 1 e 2 |
+| 3.1 | Implementar endpoints de histórico de preços (RF05) | Passo 1.1, 1.2 |
+| 3.2 | Implementar endpoints de dashboard/admin (RF06) | Passo 1.2, 1.3, 1.4, 2.1 |
 
 ### Fase 4 — Testes
 
 | Passo | Descrição | Dependências |
 |-------|-----------|--------------|
 | 4.1 | Criar testes unitários para geração de código único | Fase 1 |
-| 4.2 | Criar testes unitários para regras de check-in | Fase 2 |
+| 4.2 | Criar testes unitários para regras de check-in | Passo 1.4 |
 | 4.3 | Criar testes unitários para lote e carrinho | Fase 1 e 2 |
 | 4.4 | Criar testes de integração para novos endpoints | Todas as fases |
 
@@ -634,4 +613,9 @@ Então o sistema deve retornar métricas zeradas (0 ingressos, R$ 0,00 receita, 
 
 | Versão | Data | Descrição |
 |--------|------|-----------|
+| 1.5.0 | 2026-05-27 | 7ª revisão: corrigido "reservas vinculadas" → "ingressos vinculados" no DELETE /api/lotes/{loteId}; adicionada nota sobre fluxos de geração de ingresso (automático via carrinho + manual via POST); alinhado ReceitaTotal do Cenário 1 (RF06) para R$ 36.750,00; documentada limitação da vw_DashboardEventos nos riscos |
+| 1.4.0 | 2026-05-27 | 6ª revisão: removido endpoint GET /api/admin/reservas/hoje (tabela Reservas não possui coluna DataReserva, impossível filtrar por data sem ALTER TABLE em tabela obrigatória); RF06 agora tem 4 endpoints |
+| 1.3.0 | 2026-05-27 | 5ª revisão: corrigidas referências a "status da reserva" para "status do ingresso" (tabela Ingressos, não Reservas); removida RN03.3 (contradizia critério de aceite — CapacidadeTotal não é soma automática dos lotes); corrigido risco RF03 de LoteId para TipoIngressoId; corrigido glossário StatusReserva → Status do Ingresso |
+| 1.2.0 | 2026-05-27 | Sincronizado schema do spec com a implementação SQL: Ingressos, TiposIngresso, CheckIns, Carrinhos/CarrinhoItens, HistoricoPrecos; removidas ALTER TABLE em Reservas; removido LogAcessoIngressos |
+| 1.1.0 | 2026-05-27 | Adicionado endpoint GET /api/reservas/{id}/ingresso (RF01); descrição do POST refinada |
 | 1.0.0 | 2026-05-27 | Versão inicial da especificação dos novos recursos |
