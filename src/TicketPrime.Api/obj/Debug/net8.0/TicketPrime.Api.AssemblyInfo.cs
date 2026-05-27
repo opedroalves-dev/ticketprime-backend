@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4494119b5c4e02430c2fca3428b550c4c2822795")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fa2223db99f58cccbc0c3a0d569f4de0e4a81518")]
 [assembly: System.Reflection.AssemblyProductAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TicketPrime.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
