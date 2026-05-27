@@ -789,13 +789,46 @@ app.MapPost("/api/reservas/{id}/ingresso", async (IDbConnection db, int id) =>
     return Results.Created($"/api/ingressos/{codigoUnico}", response);
 });
 
-// 2.2. Consultar ingresso pelo código único
-app.MapGet("/api/ingressos/{codigo}", async (IDbConnection db, string codigo) =>
+// 2.2. Consultar ingresso por código único (8 caracteres) ou por ID da reserva (numérico)
+app.MapGet("/api/ingressos/{param}", async (IDbConnection db, string param) =>
 {
-    if (codigo.Length != 8)
+    // Se o parâmetro for numérico, consulta por ReservaId
+    if (int.TryParse(param, out int reservaId))
+    {
+        // Verificar se a reserva existe
+        var reserva = await db.QuerySingleOrDefaultAsync<Reserva>(
+            "SELECT Id, UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago FROM Reservas WHERE Id = @Id",
+            new { Id = reservaId });
+
+        if (reserva is null)
+            return Results.NotFound(new { erro = "Reserva não encontrada." });
+
+        // Buscar ingresso vinculado à reserva com dados do evento
+        var sql = @"
+            SELECT i.Id, i.ReservaId, i.CodigoUnico AS CodigoIngresso, i.Status,
+                   i.ValorFinal, i.DataCriacao,
+                   e.Nome AS NomeEvento, e.DataEvento,
+                   r.UsuarioCpf
+            FROM Ingressos i
+            INNER JOIN Reservas r ON r.Id = i.ReservaId
+            INNER JOIN Eventos e ON e.Id = r.EventoId
+            WHERE i.ReservaId = @ReservaId";
+
+        var ingresso = await db.QuerySingleOrDefaultAsync<IngressoPorReservaResponse>(
+            sql,
+            new { ReservaId = reservaId });
+
+        if (ingresso is null)
+            return Results.NotFound(new { erro = "Nenhum ingresso gerado para esta reserva." });
+
+        return Results.Ok(ingresso);
+    }
+
+    // Caso contrário, consulta pelo código único de 8 caracteres
+    if (param.Length != 8)
         return Results.BadRequest(new { erro = "Código deve ter 8 caracteres." });
 
-    var sql = @"
+    var sqlDetalhado = @"
         SELECT i.Id, i.ReservaId, i.TipoIngressoId, i.CodigoUnico, i.Status,
                i.ValorBruto, i.ValorDesconto, i.TaxaServico, i.ValorFinal, i.DataCriacao,
                ti.Id, ti.Nome, ti.Preco,
@@ -809,7 +842,7 @@ app.MapGet("/api/ingressos/{codigo}", async (IDbConnection db, string codigo) =>
         WHERE i.CodigoUnico = @Codigo";
 
     var resultado = await db.QueryAsync<IngressoDetalhadoResponse, TipoIngressoResumo, EventoResumo, UsuarioResumo, IngressoDetalhadoResponse>(
-        sql,
+        sqlDetalhado,
         (ingresso, tipoIngresso, evento, usuario) =>
         {
             ingresso.TipoIngresso = tipoIngresso?.Id > 0 ? tipoIngresso : null;
@@ -817,15 +850,15 @@ app.MapGet("/api/ingressos/{codigo}", async (IDbConnection db, string codigo) =>
             ingresso.Usuario = usuario;
             return ingresso;
         },
-        new { Codigo = codigo },
+        new { Codigo = param },
         splitOn: "Id,Id,Cpf");
 
-    var ingresso = resultado.FirstOrDefault();
+    var ingressoDetalhado = resultado.FirstOrDefault();
 
-    if (ingresso is null)
+    if (ingressoDetalhado is null)
         return Results.NotFound(new { erro = "Ingresso não encontrado." });
 
-    return Results.Ok(ingresso);
+    return Results.Ok(ingressoDetalhado);
 });
 
 // 2.3. Consultar ingresso por reserva
