@@ -1014,6 +1014,61 @@ app.MapGet("/api/eventos/{eventoId}/checkins/stats", async (IDbConnection db, in
 });
 
 // ==========================================================
+// NOVO ENDPOINT: Check-in via CodigoIngresso no corpo
+// ==========================================================
+
+app.MapPost("/api/checkin", async (IDbConnection db, [FromBody] CheckInRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.CodigoIngresso))
+        return Results.BadRequest(new { erro = "Código do ingresso é obrigatório." });
+
+    // Validar se o ingresso existe
+    var ingresso = await db.QuerySingleOrDefaultAsync<Ingresso>(
+        "SELECT Id, Status FROM Ingressos WHERE CodigoUnico = @Codigo",
+        new { Codigo = request.CodigoIngresso });
+
+    if (ingresso is null)
+        return Results.NotFound(new { erro = "Ingresso não encontrado." });
+
+    // Validar se o ingresso está Ativo (Confirmada)
+    if (ingresso.Status != "Confirmada")
+        return Results.BadRequest(new { erro = $"Ingresso já utilizado. Status atual: {ingresso.Status}" });
+
+    // Bloquear check-in duplicado
+    var checkinExistente = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM CheckIns WHERE IngressoId = @IngressoId",
+        new { IngressoId = ingresso.Id });
+
+    if (checkinExistente > 0)
+        return Results.BadRequest(new { erro = "Check-in já realizado para este ingresso." });
+
+    // Registrar DataHoraCheckin e obter dados inseridos
+    var insertSql = @"INSERT INTO CheckIns (IngressoId, DataCheckIn)
+                      OUTPUT INSERTED.Id, INSERTED.DataCheckIn
+                      VALUES (@IngressoId, GETDATE())";
+
+    var result = await db.QuerySingleAsync(insertSql, new { IngressoId = ingresso.Id });
+    int checkinId = (int)result.Id;
+    DateTime dataCheckIn = (DateTime)result.DataCheckIn;
+
+    // Alterar status do ingresso para Utilizada
+    await db.ExecuteAsync(
+        "UPDATE Ingressos SET Status = 'Utilizada' WHERE Id = @Id",
+        new { Id = ingresso.Id });
+
+    var response = new CheckInResponse
+    {
+        Id = checkinId,
+        IngressoId = ingresso.Id,
+        CodigoUnico = request.CodigoIngresso,
+        DataCheckIn = dataCheckIn,
+        Mensagem = "Check-in realizado com sucesso. Bem-vindo ao evento!"
+    };
+
+    return Results.Created($"/api/checkin/{checkinId}", response);
+});
+
+// ==========================================================
 // RF03 — LOTES/TIPOS DE INGRESSO (5 endpoints)
 // ==========================================================
 
