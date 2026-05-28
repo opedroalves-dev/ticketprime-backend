@@ -1,7 +1,7 @@
 # Contratos dos Novos Endpoints — TicketPrime
 
 > **Documento:** Contratos de API para os novos recursos
-> **Versão:** 1.7.0
+> **Versão:** 2.0.0
 > **Baseado em:** [`docs/spec_incrementos.md`](docs/spec_incrementos.md), [`db/ticketprime_incrementos.sql`](db/ticketprime_incrementos.sql)
 > **Stack:** .NET 8, Minimal API, Dapper, SQL Server
 > **Serialização JSON:** PascalCase (preservado), case-insensitive na leitura
@@ -339,6 +339,50 @@ GET /api/eventos/1/checkins/stats
 
 ---
 
+### 3.4. Check-in por código (alternativo)
+
+Registra a entrada do portador do ingresso no evento, utilizando o corpo da requisição com o código do ingresso (alternativa ao endpoint 3.1).
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `POST` |
+| **Rota** | `/api/checkin` |
+| **Objetivo** | Validar o ingresso na entrada e registrar o check-in via body |
+
+#### Request
+
+```
+POST /api/checkin
+Content-Type: application/json
+
+{
+    "CodigoIngresso": "A7K2X9M4"
+}
+```
+
+#### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| Código do ingresso é obrigatório | 400 | `"Código do ingresso é obrigatório."` |
+| Ingresso deve existir | 404 | `"Ingresso não encontrado."` |
+| Ingresso deve estar "Confirmada" | 400 | `"Ingresso já utilizado. Status atual: {status}"` |
+| Check-in já realizado | 400 | `"Check-in já realizado para este ingresso."` |
+
+#### Response: 201 Created
+
+```json
+{
+    "Id": 1,
+    "IngressoId": 10,
+    "CodigoUnico": "A7K2X9M4",
+    "DataCheckIn": "2026-12-15T21:30:00",
+    "Mensagem": "Check-in realizado com sucesso. Bem-vindo ao evento!"
+}
+```
+
+---
+
 ## 4. RF03 — Tipos/Lotes de Ingresso
 
 ### 4.1. Criar lote
@@ -575,6 +619,108 @@ DELETE /api/lotes/1
 #### Response: 204 No Content
 
 (Sem corpo na resposta.)
+
+---
+
+### 4.6. Tipos de ingresso
+
+#### 4.6.1. Criar tipo de ingresso
+
+Cria um novo tipo de ingresso diretamente (sem passar pelo fluxo de lotes), registrando também o preço inicial no histórico.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `POST` |
+| **Rota** | `/api/tipos-ingresso` |
+| **Objetivo** | Criar um tipo de ingresso com lote e preço, registrando histórico |
+
+##### Request
+
+```
+POST /api/tipos-ingresso
+Content-Type: application/json
+
+{
+    "EventoId": 1,
+    "Nome": "Pista VIP",
+    "QuantidadeDisponivel": 100,
+    "Preco": 250.00,
+    "Lote": "Lote 2"
+}
+```
+
+##### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| EventoId deve ser maior que zero | 400 | `"EventoId é obrigatório e deve ser maior que zero."` |
+| Evento deve existir | 404 | `"Evento não encontrado."` |
+| Nome é obrigatório | 400 | `"Nome é obrigatório."` |
+| Nome não pode exceder 100 caracteres | 400 | `"Nome não pode exceder 100 caracteres."` |
+| QuantidadeDisponivel deve ser maior que zero | 400 | `"QuantidadeDisponivel deve ser maior que zero."` |
+| Preco não pode ser negativo | 400 | `"Preco não pode ser negativo."` |
+| Lote é obrigatório | 400 | `"Lote é obrigatório."` |
+| Lote não pode exceder 100 caracteres | 400 | `"Lote não pode exceder 100 caracteres."` |
+
+##### Response: 201 Created
+
+```json
+{
+    "Id": 1,
+    "EventoId": 1,
+    "Nome": "Pista VIP",
+    "QuantidadeDisponivel": 100,
+    "Preco": 250.00,
+    "Lote": "Lote 2"
+}
+```
+
+---
+
+#### 4.6.2. Listar tipos de ingresso de um evento
+
+Retorna todos os tipos de ingresso cadastrados para um evento específico.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `GET` |
+| **Rota** | `/api/eventos/{eventoId}/tipos-ingresso` |
+| **Objetivo** | Listar tipos de ingresso de um evento |
+
+##### Request
+
+```
+GET /api/eventos/1/tipos-ingresso
+```
+
+##### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| Evento deve existir | 404 | `"Evento não encontrado."` |
+
+##### Response: 200 OK
+
+```json
+[
+    {
+        "Id": 1,
+        "EventoId": 1,
+        "Nome": "Pista VIP",
+        "QuantidadeDisponivel": 100,
+        "Preco": 250.00,
+        "Lote": "Lote 2"
+    },
+    {
+        "Id": 2,
+        "EventoId": 1,
+        "Nome": "Pista Comum",
+        "QuantidadeDisponivel": 200,
+        "Preco": 150.00,
+        "Lote": "Lote 1"
+    }
+]
+```
 
 ---
 
@@ -1256,6 +1402,139 @@ Nenhuma (retorna lista vazia se não houver reservas).
 
 ---
 
+### 7.5. Resumo do evento (admin)
+
+Retorna métricas resumidas de um evento específico para administradores.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `GET` |
+| **Rota** | `/api/admin/eventos/{eventoId}/resumo` |
+| **Objetivo** | Obter resumo gerencial do evento |
+
+#### Request
+
+```
+GET /api/admin/eventos/1/resumo
+```
+
+#### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| Evento deve existir | 404 | `"Evento não encontrado."` |
+
+#### Response: 200 OK
+
+```json
+{
+    "EventoId": 1,
+    "NomeEvento": "Show da Banda X",
+    "DataEvento": "2026-12-15T20:00:00",
+    "CapacidadeTotal": 500,
+    "TotalReservas": 45,
+    "IngressosDisponiveis": 50,
+    "ReceitaTotal": 36750.00,
+    "TotalCheckIns": 150
+}
+```
+
+---
+
+### 7.6. Listar check-ins do evento (admin)
+
+Retorna todos os check-ins de um evento específico, com dados do usuário.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `GET` |
+| **Rota** | `/api/admin/eventos/{eventoId}/checkins` |
+| **Objetivo** | Listar check-ins de um evento com dados completos |
+
+#### Request
+
+```
+GET /api/admin/eventos/1/checkins
+```
+
+#### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| Evento deve existir | 404 | `"Evento não encontrado."` |
+
+#### Response: 200 OK
+
+```json
+{
+    "EventoId": 1,
+    "NomeEvento": "Show da Banda X",
+    "TotalCheckIns": 150,
+    "CheckIns": [
+        {
+            "Id": 1,
+            "IngressoId": 10,
+            "CodigoUnico": "A7K2X9M4",
+            "NomeUsuario": "João Silva",
+            "UsuarioCpf": "12345678901",
+            "TipoIngresso": "Pista VIP",
+            "DataCheckIn": "2026-12-15T21:30:00"
+        }
+    ]
+}
+```
+
+---
+
+### 7.7. Listar reservas do evento (admin)
+
+Retorna todas as reservas de um evento específico, com dados completos do ingresso e check-in.
+
+| Campo | Valor |
+|-------|-------|
+| **Método** | `GET` |
+| **Rota** | `/api/admin/eventos/{eventoId}/reservas` |
+| **Objetivo** | Listar reservas de um evento com dados administrativos |
+
+#### Request
+
+```
+GET /api/admin/eventos/1/reservas
+```
+
+#### Validações
+
+| Regra | Código | Mensagem |
+|-------|--------|----------|
+| Evento deve existir | 404 | `"Evento não encontrado."` |
+
+#### Response: 200 OK
+
+```json
+[
+    {
+        "ReservaId": 1,
+        "UsuarioCpf": "12345678901",
+        "NomeUsuario": "João Silva",
+        "EventoId": 1,
+        "NomeEvento": "Show da Banda X",
+        "DataEvento": "2026-12-15T20:00:00",
+        "IngressoId": 10,
+        "CodigoUnico": "A7K2X9M4",
+        "StatusIngresso": "Confirmada",
+        "TipoIngresso": "Pista VIP",
+        "ValorBruto": 250.00,
+        "ValorDesconto": 0.00,
+        "TaxaServico": 12.50,
+        "ValorFinal": 262.50,
+        "CupomUtilizado": null,
+        "CheckInRealizado": true
+    }
+]
+```
+
+---
+
 ## 8. Models Compartilhados
 
 ### 8.1. Request models
@@ -1299,6 +1578,32 @@ public class CarrinhoItemRequest
 public class ConfirmarCarrinhoRequest
 {
     public string? CupomUtilizado { get; set; }
+}
+```
+
+#### CriarTipoIngressoRequest
+
+Usado em: `POST /api/tipos-ingresso`
+
+```csharp
+public class CriarTipoIngressoRequest
+{
+    public int EventoId { get; set; }
+    public string Nome { get; set; } = string.Empty;
+    public int QuantidadeDisponivel { get; set; }
+    public decimal Preco { get; set; }
+    public string Lote { get; set; } = string.Empty;
+}
+```
+
+#### CheckInRequest
+
+Usado em: `POST /api/checkin`
+
+```csharp
+public class CheckInRequest
+{
+    public string CodigoIngresso { get; set; } = string.Empty;
 }
 ```
 
@@ -1633,7 +1938,7 @@ public class DashboardLoteResponse
 
 #### AdminReservaResponse
 
-Usado em: `GET /api/admin/reservas`
+Usado em: `GET /api/admin/reservas`, `GET /api/admin/eventos/{eventoId}/reservas`
 
 ```csharp
 public class AdminReservaResponse
@@ -1671,10 +1976,60 @@ public class SimulacaoPrecoResponse
 }
 ```
 
+#### TipoIngressoResponse
+
+Usado em: `POST /api/tipos-ingresso`, `GET /api/eventos/{eventoId}/tipos-ingresso`
+
+```csharp
+public class TipoIngressoResponse
+{
+    public int Id { get; set; }
+    public int EventoId { get; set; }
+    public string Nome { get; set; } = string.Empty;
+    public int QuantidadeDisponivel { get; set; }
+    public decimal Preco { get; set; }
+    public string Lote { get; set; } = string.Empty;
+}
+```
+
+#### CheckInResponse
+
+Usado em: `POST /api/checkin`
+
+```csharp
+public class CheckInResponse
+{
+    public int Id { get; set; }
+    public int IngressoId { get; set; }
+    public string CodigoUnico { get; set; } = string.Empty;
+    public DateTime DataCheckIn { get; set; }
+    public string Mensagem { get; set; } = string.Empty;
+}
+```
+
+#### EventoResumoResponse
+
+Usado em: `GET /api/admin/eventos/{eventoId}/resumo`
+
+```csharp
+public class EventoResumoResponse
+{
+    public int EventoId { get; set; }
+    public string NomeEvento { get; set; } = string.Empty;
+    public DateTime DataEvento { get; set; }
+    public int CapacidadeTotal { get; set; }
+    public int TotalReservas { get; set; }
+    public int IngressosDisponiveis { get; set; }
+    public decimal ReceitaTotal { get; set; }
+    public int TotalCheckIns { get; set; }
+}
+```
+
 ## Histórico de Revisões
 
 | Versão | Data | Descrição |
 |--------|------|-----------|
+| 2.0.0 | 2026-05-27 | 9ª revisão: adicionados endpoints POST /api/checkin (seção 3.4), POST /api/tipos-ingresso (seção 4.6.1), GET /api/eventos/{eventoId}/tipos-ingresso (seção 4.6.2), GET /api/admin/eventos/{eventoId}/resumo (seção 7.5), GET /api/admin/eventos/{eventoId}/checkins (seção 7.6), GET /api/admin/eventos/{eventoId}/reservas (seção 7.7); adicionados modelos CriarTipoIngressoRequest, CheckInRequest, TipoIngressoResponse, CheckInResponse, EventoResumoResponse; atualizado AdminReservaResponse para incluir endpoint 7.7 |
 | 1.8.0 | 2026-05-27 | 8ª revisão: adicionado endpoint POST /api/reservas/simular-preco (seção 6.0) com transparência de preço (PrecoBase, TaxaServico, ValorDesconto, ValorFinal); adicionados modelos SimulacaoPrecoRequest (8.1) e SimulacaoPrecoResponse (8.2) |
 | 1.7.0 | 2026-05-27 | 7ª revisão: adicionados TipoIngressoId (int?) e NomeLote (string?) ao HistoricoPrecoResponse para identificar alterações de lote no histórico do evento; JSON 6.1 atualizado com registros de lote; adicionados modelos LoteResponse e LoteListaResponse na seção 8.2; adicionada nota sobre limitação da view vw_DashboardEventos na seção RF06 |
 | 1.6.0 | 2026-05-27 | 6ª revisão: removido endpoint /api/admin/reservas/hoje e modelos AdminReservasHojeResponse/AdminReservaHojeItem (tabela Reservas não possui coluna DataReserva); removido campo DataReserva de AdminReservaResponse; corrigida inconsistência numérica ReceitaTotal 30000→36750 (45×300 + 155×150 = 36750) |
