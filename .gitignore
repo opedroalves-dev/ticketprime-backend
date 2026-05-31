@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+*.vs/
+
+# Configuração com credenciais (nunca versionar)
+appsettings.Development.json
+appsettings.Staging.json
+
+# User Secrets (diretório local)
+%APPDATA%/Microsoft/UserSecrets/
+~/.microsoft/usersecrets/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

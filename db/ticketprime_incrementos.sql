@@ -24,6 +24,7 @@ BEGIN
         TaxaServico     DECIMAL(10,2)       NOT NULL DEFAULT 0.00,
         DataInicioVenda DATETIME            NOT NULL,
         DataFimVenda    DATETIME            NOT NULL,
+        Lote            VARCHAR(100)        NULL,
         CONSTRAINT PK_TiposIngresso PRIMARY KEY (Id),
         CONSTRAINT FK_TiposIngresso_Eventos FOREIGN KEY (EventoId)
             REFERENCES Eventos(Id)

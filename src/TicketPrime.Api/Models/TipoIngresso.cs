@@ -10,4 +10,5 @@ public class TipoIngresso
     public decimal TaxaServico { get; set; }
     public DateTime DataInicioVenda { get; set; }
     public DateTime DataFimVenda { get; set; }
+    public string? Lote { get; set; }
 }

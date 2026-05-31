@@ -2,6 +2,8 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
+using TicketPrime.Api.Authentication;
+using TicketPrime.Api.Middleware;
 using TicketPrime.Api.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,11 +21,38 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = null; // Preserva os nomes originais (PascalCase)
 });
 
+builder.Services.AddAuthentication("ApiKey")
+    .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", opts =>
+    {
+        opts.ApiKey = builder.Configuration["Authentication:ApiKey"]
+            ?? throw new InvalidOperationException("Authentication:ApiKey não configurada.");
+    });
+
+builder.Services.AddAuthorization();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? throw new InvalidOperationException("CORS AllowedOrigins não configurado.");
+        policy.WithOrigins(origins)
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 var app = builder.Build();
 
-// Middleware para servir arquivos estáticos (wwwroot)
-app.UseDefaultFiles();
-app.UseStaticFiles();
+// Middleware global de exception handling (Item 3)
+app.UseMiddleware<TicketPrime.Api.Middleware.ExceptionHandlingMiddleware>();
+
+// Middleware de CORS (Item 6)
+app.UseCors("AllowFrontend");
+
+// Middleware de autenticação e autorização (Item 2)
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Inicialização do banco de dados
 await InicializarBancoAsync(connectionString);
@@ -267,9 +296,9 @@ static async Task InicializarBancoAsync(string connStr)
     if (!await IndiceExiste(db, "IX_HistoricoPrecos_TipoIngressoId"))
         await db.ExecuteAsync("CREATE INDEX IX_HistoricoPrecos_TipoIngressoId ON HistoricoPrecos(TipoIngressoId, DataAlteracao DESC)");
 
-    // ========== VIEWS ==========
-    await CriarOuRecriarView(db, "vw_DashboardEventos", @"
-        CREATE VIEW vw_DashboardEventos
+    // ========== VIEWS (A3: CREATE OR ALTER VIEW — operação atômica) ==========
+    await CriarOuRecriarView(db, @"
+        CREATE OR ALTER VIEW vw_DashboardEventos
         AS
         SELECT
             e.Id                           AS EventoId,
@@ -307,8 +336,8 @@ static async Task InicializarBancoAsync(string connStr)
         LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
         GROUP BY e.Id, e.Nome, e.DataEvento, e.CapacidadeTotal, e.PrecoPadrao");
 
-    await CriarOuRecriarView(db, "vw_DashboardLotes", @"
-        CREATE VIEW vw_DashboardLotes
+    await CriarOuRecriarView(db, @"
+        CREATE OR ALTER VIEW vw_DashboardLotes
         AS
         SELECT
             ti.Id                           AS TipoIngressoId,
@@ -360,13 +389,24 @@ static async Task<bool> ColunaExiste(IDbConnection db, string tabela, string col
         new { Tabela = tabela, Coluna = coluna }) > 0;
 }
 
-static async Task CriarOuRecriarView(IDbConnection db, string nomeView, string createSql)
+static async Task CriarOuRecriarView(IDbConnection db, string createSql)
 {
-    await db.ExecuteAsync($"IF EXISTS (SELECT * FROM sys.views WHERE name = @NomeView) DROP VIEW {nomeView}",
-        new { NomeView = nomeView });
+    // A3: CREATE OR ALTER VIEW é atômico — não há mais DROP VIEW separado
     await db.ExecuteAsync(createSql);
-    Console.WriteLine($"View {nomeView} criada/recriada.");
 }
+
+// Health check (Item 7 / F4) — GET /health
+// Retorna 200 OK com status "Healthy" e timestamp ISO 8601.
+// Não requer autenticação, não acessa banco de dados,
+// não expõe dados sensíveis.
+app.MapGet("/health", () =>
+{
+    return Results.Ok(new
+    {
+        status = "Healthy",
+        timestamp = DateTime.UtcNow.ToString("o")
+    });
+});
 
 app.MapGet("/", () => Results.Redirect("/index.html"));
 
@@ -1622,17 +1662,19 @@ app.MapGet("/api/carrinho/{cpf}", async (IDbConnection db, string cpf) =>
 });
 
 // 5.3. Limpar carrinho
-app.MapDelete("/api/carrinho/{id}", async (IDbConnection db, int id) =>
+app.MapDelete("/api/carrinho/{cpf}", async (IDbConnection db, string cpf) =>
 {
-    var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(
-        "SELECT Id, Status, DataExpiracao FROM Carrinhos WHERE Id = @Id",
-        new { Id = id });
+    if (cpf.Length != 11 || !cpf.All(char.IsDigit))
+        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
+
+    var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(@"
+        SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao
+        FROM Carrinhos
+        WHERE UsuarioCpf = @Cpf AND Status = 'Ativo'",
+        new { Cpf = cpf });
 
     if (carrinho is null)
-        return Results.NotFound(new { erro = "Carrinho não encontrado." });
-
-    if (carrinho.Status != "Ativo")
-        return Results.BadRequest(new { erro = "Carrinho não está ativo." });
+        return Results.NotFound(new { erro = "Nenhum carrinho ativo encontrado para este CPF." });
 
     if (carrinho.DataExpiracao <= DateTime.Now)
     {
@@ -1650,169 +1692,205 @@ app.MapDelete("/api/carrinho/{id}", async (IDbConnection db, int id) =>
 });
 
 // 5.4. Confirmar carrinho
-app.MapPost("/api/carrinho/{id}/confirmar", async (IDbConnection db, int id, [FromBody] ConfirmarCarrinhoRequest? request) =>
+app.MapPost("/api/carrinho/{cpf}/confirmar", async (IDbConnection db, string cpf, [FromBody] ConfirmarCarrinhoRequest? request) =>
 {
+    if (cpf.Length != 11 || !cpf.All(char.IsDigit))
+        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
+
     var cupomUtilizado = request?.CupomUtilizado;
 
     var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(@"
         SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao
         FROM Carrinhos
-        WHERE Id = @Id AND Status = 'Ativo'",
-        new { Id = id });
+        WHERE UsuarioCpf = @Cpf AND Status = 'Ativo'",
+        new { Cpf = cpf });
 
     if (carrinho is null)
-        return Results.NotFound(new { erro = "Carrinho não encontrado ou não está ativo." });
+        return Results.NotFound(new { erro = "Nenhum carrinho ativo encontrado para este CPF." });
 
     if (carrinho.DataExpiracao <= DateTime.Now)
         return Results.BadRequest(new { erro = "Carrinho expirado. Crie um novo carrinho." });
 
-    // Validar cupom se informado
-    Cupom? cupom = null;
-    if (!string.IsNullOrWhiteSpace(cupomUtilizado))
-    {
-        cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
-            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
-            new { Codigo = cupomUtilizado });
-
-        if (cupom is null)
-            return Results.BadRequest(new { erro = "Cupom não encontrado." });
-    }
-
-    // Obter itens do carrinho
-    var itensCarrinho = await db.QueryAsync<CarrinhoItem>(@"
-        SELECT ci.Id, ci.CarrinhoId, ci.EventoId, ci.TipoIngressoId, ci.Quantidade, ci.PrecoUnitario
-        FROM CarrinhoItens ci
-        WHERE ci.CarrinhoId = @CarrinhoId",
+    // Verificar se o carrinho possui itens antes de iniciar a transação
+    var totalItens = await db.ExecuteScalarAsync<int>(
+        "SELECT COUNT(1) FROM CarrinhoItens WHERE CarrinhoId = @CarrinhoId",
         new { CarrinhoId = carrinho.Id });
 
-    var reservasCriadas = new List<ReservaConfirmadaResponse>();
-    decimal totalPago = 0;
+    if (totalItens == 0)
+        return Results.BadRequest(new { erro = "Carrinho vazio. Adicione itens antes de confirmar." });
 
-    foreach (var item in itensCarrinho)
+    // Iniciar transação
+    if (db.State != ConnectionState.Open)
+        db.Open();
+    using var transaction = db.BeginTransaction();
+    try
     {
-        var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-            "SELECT Id, Nome, PrecoPadrao FROM Eventos WHERE Id = @Id",
-            new { Id = item.EventoId });
-
-        if (evento is null)
-            continue;
-
-        string nomeLote = "";
-        if (item.TipoIngressoId.HasValue)
+        // Validar cupom se informado
+        Cupom? cupom = null;
+        if (!string.IsNullOrWhiteSpace(cupomUtilizado))
         {
-            var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-                "SELECT Id, Nome FROM TiposIngresso WHERE Id = @Id",
-                new { Id = item.TipoIngressoId.Value });
-            nomeLote = lote?.Nome ?? "";
+            cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
+                "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
+                new { Codigo = cupomUtilizado },
+                transaction: transaction, commandTimeout: 30);
+
+            if (cupom is null)
+                throw new ValidationException("Cupom não encontrado.");
         }
 
-        for (int q = 0; q < item.Quantidade; q++)
+        // Obter itens do carrinho
+        var itensCarrinho = await db.QueryAsync<CarrinhoItem>(@"
+            SELECT ci.Id, ci.CarrinhoId, ci.EventoId, ci.TipoIngressoId, ci.Quantidade, ci.PrecoUnitario
+            FROM CarrinhoItens ci
+            WHERE ci.CarrinhoId = @CarrinhoId",
+            new { CarrinhoId = carrinho.Id },
+            transaction: transaction, commandTimeout: 30);
+
+        var reservasCriadas = new List<ReservaConfirmadaResponse>();
+        decimal totalPago = 0;
+
+        foreach (var item in itensCarrinho)
         {
-            // Verificar limite de 2 reservas por CPF por evento
-            var reservasCpfEvento = await db.ExecuteScalarAsync<int>(
-                "SELECT COUNT(1) FROM Reservas WHERE UsuarioCpf = @UsuarioCpf AND EventoId = @EventoId",
-                new { UsuarioCpf = carrinho.UsuarioCpf, EventoId = item.EventoId });
+            var evento = await db.QuerySingleOrDefaultAsync<Evento>(
+                "SELECT Id, Nome, PrecoPadrao FROM Eventos WHERE Id = @Id",
+                new { Id = item.EventoId },
+                transaction: transaction, commandTimeout: 30);
 
-            if (reservasCpfEvento >= 2)
-                return Results.BadRequest(new { erro = $"CPF já possui o limite máximo de 2 reservas para o evento {evento.Id}." });
+            if (evento is null)
+                throw new ValidationException($"Evento {item.EventoId} não encontrado.");
 
-            // Verificar capacidade do lote
+            string nomeLote = "";
             if (item.TipoIngressoId.HasValue)
             {
                 var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-                    "SELECT Id, Capacidade FROM TiposIngresso WHERE Id = @Id",
-                    new { Id = item.TipoIngressoId.Value });
-
-                if (lote is not null)
-                {
-                    var vendidos = await db.ExecuteScalarAsync<int>(
-                        "SELECT COUNT(1) FROM Ingressos WHERE TipoIngressoId = @TipoIngressoId AND Status IN ('Confirmada', 'Utilizada')",
-                        new { TipoIngressoId = item.TipoIngressoId.Value });
-
-                    if (vendidos >= lote.Capacidade)
-                        return Results.BadRequest(new { erro = $"Capacidade insuficiente no lote {item.TipoIngressoId}." });
-                }
+                    "SELECT Id, Nome FROM TiposIngresso WHERE Id = @Id",
+                    new { Id = item.TipoIngressoId.Value },
+                    transaction: transaction, commandTimeout: 30);
+                nomeLote = lote?.Nome ?? "";
             }
 
-            // Calcular valor
-            decimal valorBruto = item.PrecoUnitario;
-            decimal valorDesconto = 0;
-            decimal taxaServico = 0;
-            decimal valorFinal = valorBruto;
-
-            if (cupom is not null && evento.PrecoPadrao >= cupom.ValorMinimoRegra)
+            for (int q = 0; q < item.Quantidade; q++)
             {
-                valorDesconto = valorBruto * cupom.PorcentagemDesconto / 100m;
-                valorFinal = valorBruto - valorDesconto;
-            }
+                // Verificar limite de 2 reservas por CPF por evento
+                var reservasCpfEvento = await db.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(1) FROM Reservas WHERE UsuarioCpf = @UsuarioCpf AND EventoId = @EventoId",
+                    new { UsuarioCpf = carrinho.UsuarioCpf, EventoId = item.EventoId },
+                    transaction: transaction, commandTimeout: 30);
 
-            // Criar reserva
-            var reservaId = await db.QuerySingleAsync<int>(@"
-                INSERT INTO Reservas (UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago)
-                OUTPUT INSERTED.Id
-                VALUES (@UsuarioCpf, @EventoId, @CupomUtilizado, @ValorFinalPago)",
-                new
+                if (reservasCpfEvento >= 2)
+                    throw new ValidationException($"CPF já possui o limite máximo de 2 reservas para o evento {evento.Id}.");
+
+                // Verificar capacidade do lote
+                if (item.TipoIngressoId.HasValue)
                 {
-                    UsuarioCpf = carrinho.UsuarioCpf,
-                    EventoId = item.EventoId,
-                    CupomUtilizado = cupom?.Codigo,
-                    ValorFinalPago = valorFinal
-                });
+                    var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
+                        "SELECT Id, Capacidade FROM TiposIngresso WHERE Id = @Id",
+                        new { Id = item.TipoIngressoId.Value },
+                        transaction: transaction, commandTimeout: 30);
 
-            // Gerar código único para o ingresso
-            var codigoUnico = await GerarCodigoUnicoAsync(db);
+                    if (lote is not null)
+                    {
+                        var vendidos = await db.ExecuteScalarAsync<int>(
+                            "SELECT COUNT(1) FROM Ingressos WHERE TipoIngressoId = @TipoIngressoId AND Status IN ('Confirmada', 'Utilizada')",
+                            new { TipoIngressoId = item.TipoIngressoId.Value },
+                            transaction: transaction, commandTimeout: 30);
 
-            // Criar ingresso
-            var ingressoId = await db.QuerySingleAsync<int>(@"
-                INSERT INTO Ingressos (ReservaId, TipoIngressoId, CodigoUnico, Status, ValorBruto, ValorDesconto, TaxaServico, ValorFinal, DataCriacao)
-                OUTPUT INSERTED.Id
-                VALUES (@ReservaId, @TipoIngressoId, @CodigoUnico, 'Confirmada', @ValorBruto, @ValorDesconto, @TaxaServico, @ValorFinal, GETDATE())",
-                new
+                        if (vendidos >= lote.Capacidade)
+                            throw new ValidationException($"Capacidade insuficiente no lote {item.TipoIngressoId}.");
+                    }
+                }
+
+                // Calcular valor
+                decimal valorBruto = item.PrecoUnitario;
+                decimal valorDesconto = 0;
+                decimal taxaServico = 0;
+                decimal valorFinal = valorBruto;
+
+                if (cupom is not null && evento.PrecoPadrao >= cupom.ValorMinimoRegra)
+                {
+                    valorDesconto = valorBruto * cupom.PorcentagemDesconto / 100m;
+                    valorFinal = valorBruto - valorDesconto;
+                }
+
+                // Criar reserva
+                var reservaId = await db.QuerySingleAsync<int>(@"
+                    INSERT INTO Reservas (UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago)
+                    OUTPUT INSERTED.Id
+                    VALUES (@UsuarioCpf, @EventoId, @CupomUtilizado, @ValorFinalPago)",
+                    new
+                    {
+                        UsuarioCpf = carrinho.UsuarioCpf,
+                        EventoId = item.EventoId,
+                        CupomUtilizado = cupom?.Codigo,
+                        ValorFinalPago = valorFinal
+                    },
+                    transaction: transaction, commandTimeout: 30);
+
+                // Gerar código único para o ingresso
+                var codigoUnico = await GerarCodigoUnicoAsync(db, transaction, 30);
+
+                // Criar ingresso
+                var ingressoId = await db.QuerySingleAsync<int>(@"
+                    INSERT INTO Ingressos (ReservaId, TipoIngressoId, CodigoUnico, Status, ValorBruto, ValorDesconto, TaxaServico, ValorFinal, DataCriacao)
+                    OUTPUT INSERTED.Id
+                    VALUES (@ReservaId, @TipoIngressoId, @CodigoUnico, 'Confirmada', @ValorBruto, @ValorDesconto, @TaxaServico, @ValorFinal, GETDATE())",
+                    new
+                    {
+                        ReservaId = reservaId,
+                        TipoIngressoId = item.TipoIngressoId,
+                        CodigoUnico = codigoUnico,
+                        ValorBruto = valorBruto,
+                        ValorDesconto = valorDesconto,
+                        TaxaServico = taxaServico,
+                        ValorFinal = valorFinal
+                    },
+                    transaction: transaction, commandTimeout: 30);
+
+                reservasCriadas.Add(new ReservaConfirmadaResponse
                 {
                     ReservaId = reservaId,
-                    TipoIngressoId = item.TipoIngressoId,
+                    IngressoId = ingressoId,
                     CodigoUnico = codigoUnico,
-                    ValorBruto = valorBruto,
-                    ValorDesconto = valorDesconto,
-                    TaxaServico = taxaServico,
-                    ValorFinal = valorFinal
+                    EventoId = item.EventoId,
+                    NomeEvento = evento.Nome,
+                    TipoIngresso = nomeLote,
+                    ValorFinal = valorFinal,
+                    Status = "Confirmada"
                 });
 
-            reservasCriadas.Add(new ReservaConfirmadaResponse
-            {
-                ReservaId = reservaId,
-                IngressoId = ingressoId,
-                CodigoUnico = codigoUnico,
-                EventoId = item.EventoId,
-                NomeEvento = evento.Nome,
-                TipoIngresso = nomeLote,
-                ValorFinal = valorFinal,
-                Status = "Confirmada"
-            });
-
-            totalPago += valorFinal;
+                totalPago += valorFinal;
+            }
         }
+
+        // Marcar carrinho como confirmado
+        await db.ExecuteAsync(
+            "UPDATE Carrinhos SET Status = 'Confirmado' WHERE Id = @Id",
+            new { Id = carrinho.Id },
+            transaction: transaction, commandTimeout: 30);
+
+        // Limpar itens do carrinho
+        await db.ExecuteAsync(
+            "DELETE FROM CarrinhoItens WHERE CarrinhoId = @Id",
+            new { Id = carrinho.Id },
+            transaction: transaction, commandTimeout: 30);
+
+        transaction.Commit();
+
+        var response = new CarrinhoConfirmacaoResponse
+        {
+            Mensagem = "Carrinho confirmado com sucesso.",
+            CarrinhoId = carrinho.Id,
+            ReservasCriadas = reservasCriadas,
+            TotalPago = totalPago
+        };
+
+        return Results.Created($"/api/carrinho/{cpf}/confirmar", response);
     }
-
-    // Marcar carrinho como confirmado
-    await db.ExecuteAsync(
-        "UPDATE Carrinhos SET Status = 'Confirmado' WHERE Id = @Id",
-        new { Id = carrinho.Id });
-
-    // Limpar itens do carrinho
-    await db.ExecuteAsync(
-        "DELETE FROM CarrinhoItens WHERE CarrinhoId = @Id",
-        new { Id = carrinho.Id });
-
-    var response = new CarrinhoConfirmacaoResponse
+    catch
     {
-        Mensagem = "Carrinho confirmado com sucesso.",
-        CarrinhoId = carrinho.Id,
-        ReservasCriadas = reservasCriadas,
-        TotalPago = totalPago
-    };
-
-    return Results.Created($"/api/carrinho/{id}/confirmar", response);
+        transaction.Rollback();
+        throw;
+    }
 });
 
 // ==========================================================
@@ -1894,7 +1972,7 @@ app.MapGet("/api/admin/eventos", async (IDbConnection db) =>
         "SELECT * FROM vw_DashboardEventos ORDER BY DataEvento");
 
     return Results.Ok(eventos);
-});
+}).RequireAuthorization();
 
 // 7.2. Dashboard detalhado de um evento
 app.MapGet("/api/admin/eventos/{eventoId}", async (IDbConnection db, int eventoId) =>
@@ -1941,7 +2019,7 @@ app.MapGet("/api/admin/eventos/{eventoId}", async (IDbConnection db, int eventoI
     eventoDashboard.Lotes = lotes.AsList();
 
     return Results.Ok(eventoDashboard);
-});
+}).RequireAuthorization();
 
 // 7.3. Métricas por lote do evento
 app.MapGet("/api/admin/eventos/{eventoId}/lotes", async (IDbConnection db, int eventoId) =>
@@ -1958,14 +2036,16 @@ app.MapGet("/api/admin/eventos/{eventoId}/lotes", async (IDbConnection db, int e
         new { EventoId = eventoId });
 
     return Results.Ok(lotes);
-});
+}).RequireAuthorization();
 
-// 7.4. Listar todas as reservas (admin)
+// 7.4. Listar todas as reservas (admin) — Item 5.2: SQL fixo com parâmetros opcionais
 app.MapGet("/api/admin/reservas", async (IDbConnection db,
     [FromQuery] int? eventoId,
     [FromQuery] string? status,
     [FromQuery] string? cpf) =>
 {
+    var parameters = new { EventoId = eventoId, Status = status, Cpf = cpf };
+
     var sql = @"
         SELECT
             r.Id                     AS ReservaId,
@@ -1990,34 +2070,15 @@ app.MapGet("/api/admin/reservas", async (IDbConnection db,
         LEFT JOIN Ingressos i ON i.ReservaId = r.Id
         LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
         LEFT JOIN CheckIns ci ON ci.IngressoId = i.Id
-        WHERE 1=1";
-
-    var parameters = new DynamicParameters();
-
-    if (eventoId.HasValue)
-    {
-        sql += " AND r.EventoId = @EventoId";
-        parameters.Add("EventoId", eventoId.Value);
-    }
-
-    if (!string.IsNullOrWhiteSpace(status))
-    {
-        sql += " AND i.Status = @Status";
-        parameters.Add("Status", status);
-    }
-
-    if (!string.IsNullOrWhiteSpace(cpf))
-    {
-        sql += " AND r.UsuarioCpf = @Cpf";
-        parameters.Add("Cpf", cpf);
-    }
-
-    sql += " ORDER BY r.Id DESC";
+        WHERE (@EventoId IS NULL OR r.EventoId = @EventoId)
+          AND (@Status IS NULL OR i.Status = @Status)
+          AND (@Cpf IS NULL OR r.UsuarioCpf = @Cpf)
+        ORDER BY r.Id DESC";
 
     var reservas = await db.QueryAsync<AdminReservaResponse>(sql, parameters);
 
     return Results.Ok(reservas);
-});
+}).RequireAuthorization();
 
 // ==========================================================
 // ENDPOINTS ADMINISTRATIVOS DE CONSULTA
@@ -2057,7 +2118,7 @@ app.MapGet("/api/admin/eventos/{eventoId}/resumo", async (IDbConnection db, int 
     var resumo = await db.QuerySingleAsync<EventoResumoResponse>(sql, new { EventoId = eventoId });
 
     return Results.Ok(resumo);
-});
+}).RequireAuthorization();
 
 // 8.2. Listar check-ins de um evento (admin)
 app.MapGet("/api/admin/eventos/{eventoId}/checkins", async (IDbConnection db, int eventoId) =>
@@ -2091,7 +2152,7 @@ app.MapGet("/api/admin/eventos/{eventoId}/checkins", async (IDbConnection db, in
     };
 
     return Results.Ok(response);
-});
+}).RequireAuthorization();
 
 // 8.3. Listar reservas de um evento (admin)
 app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (IDbConnection db, int eventoId) =>
@@ -2133,13 +2194,13 @@ app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (IDbConnection db, in
     var reservas = await db.QueryAsync<AdminReservaResponse>(sql, new { EventoId = eventoId });
 
     return Results.Ok(reservas);
-});
+}).RequireAuthorization();
 
 // ==========================================================
 // MÉTODOS AUXILIARES
 // ==========================================================
 
-static async Task<string> GerarCodigoUnicoAsync(IDbConnection db)
+static async Task<string> GerarCodigoUnicoAsync(IDbConnection db, IDbTransaction? transaction = null, int? commandTimeout = 30)
 {
     const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     var random = Random.Shared;
@@ -2151,7 +2212,8 @@ static async Task<string> GerarCodigoUnicoAsync(IDbConnection db)
     }
     while (await db.ExecuteScalarAsync<int>(
         "SELECT COUNT(1) FROM Ingressos WHERE CodigoUnico = @Codigo",
-        new { Codigo = codigo }) > 0);
+        new { Codigo = codigo },
+        transaction: transaction, commandTimeout: commandTimeout) > 0);
 
     return codigo;
 }
