@@ -18,9 +18,13 @@ builder.Services.AddScoped<IDbConnection>(sp =>
 
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<UsuarioService>();
-
 builder.Services.AddScoped<ICupomRepository, CupomRepository>();
 builder.Services.AddScoped<CupomService>();
+
+builder.Services.AddScoped<IEventoRepository, EventoRepository>();
+builder.Services.AddScoped<IHistoricoPrecoRepository, HistoricoPrecoRepository>();
+builder.Services.AddScoped<EventoService>();
+
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -430,48 +434,12 @@ app.MapPost("/api/usuarios", async (UsuarioService service, [FromBody] UsuarioRe
         : Results.BadRequest(new { erro = resultado.Erro });
 });
 
-app.MapPost("/api/eventos", async (IDbConnection db, [FromBody] EventoRequest request) =>
+app.MapPost("/api/eventos", async (EventoService service, [FromBody] EventoRequest request) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Nome))
-        return Results.BadRequest(new { erro = "Nome é obrigatório." });
-
-    if (request.Nome.Length > 200)
-        return Results.BadRequest(new { erro = "Nome não pode exceder 200 caracteres." });
-
-    if (request.CapacidadeTotal <= 0)
-        return Results.BadRequest(new { erro = "CapacidadeTotal deve ser maior que zero." });
-
-    if (request.PrecoPadrao < 0)
-        return Results.BadRequest(new { erro = "PrecoPadrao não pode ser negativo." });
-
-    var sql = @"INSERT INTO Eventos (Nome, CapacidadeTotal, DataEvento, PrecoPadrao)
-                OUTPUT INSERTED.Id
-                VALUES (@Nome, @CapacidadeTotal, @DataEvento, @PrecoPadrao)";
-
-    var id = await db.QuerySingleAsync<int>(sql, new
-    {
-        request.Nome,
-        request.CapacidadeTotal,
-        request.DataEvento,
-        request.PrecoPadrao
-    });
-
-    // Registra preço inicial no histórico (RF05)
-    await db.ExecuteAsync(@"
-        INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
-        VALUES (@EventoId, NULL, NULL, @PrecoNovo, 'Preço inicial do evento')",
-        new { EventoId = id, PrecoNovo = request.PrecoPadrao });
-
-    var evento = new Evento
-    {
-        Id = id,
-        Nome = request.Nome,
-        CapacidadeTotal = request.CapacidadeTotal,
-        DataEvento = request.DataEvento,
-        PrecoPadrao = request.PrecoPadrao
-    };
-
-    return Results.Created($"/api/eventos/{id}", evento);
+    var resultado = await service.CriarAsync(request);
+    return resultado.Sucesso
+        ? Results.Created($"/api/eventos/{resultado.Id}", resultado.Evento)
+        : Results.BadRequest(new { erro = resultado.Erro });
 });
 
 app.MapPost("/api/reservas", async (IDbConnection db, [FromBody] ReservaRequest request) =>
@@ -640,12 +608,9 @@ app.MapPost("/api/reservas/simular-preco", async (IDbConnection db, [FromBody] S
     return Results.Ok(response);
 });
 
-app.MapGet("/api/eventos", async (IDbConnection db) =>
+app.MapGet("/api/eventos", async (EventoService service) =>
 {
-    const string sql = "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos";
-
-    var eventos = await db.QueryAsync<Evento>(sql);
-
+    var eventos = await service.ListarTodosAsync();
     return Results.Ok(eventos);
 });
 
