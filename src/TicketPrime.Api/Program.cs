@@ -26,7 +26,8 @@ builder.Services.AddScoped<IHistoricoPrecoRepository, HistoricoPrecoRepository>(
 builder.Services.AddScoped<ITipoIngressoRepository, TipoIngressoRepository>();
 builder.Services.AddScoped<EventoService>();
 builder.Services.AddScoped<HistoricoPrecoService>();
-
+builder.Services.AddScoped<IIngressoRepository, IngressoRepository>();
+builder.Services.AddScoped<TipoIngressoService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -1016,329 +1017,102 @@ app.MapPost("/api/checkin", async (IDbConnection db, [FromBody] CheckInRequest r
 });
 
 // ==========================================================
-// RF03 — LOTES/TIPOS DE INGRESSO (5 endpoints)
+// RF03 — LOTES/TIPOS DE INGRESSO (7 endpoints)
 // ==========================================================
 
-// 4.1. Criar lote
-app.MapPost("/api/eventos/{eventoId}/lotes", async (IDbConnection db, int eventoId, [FromBody] CriarLoteRequest request) =>
+// 1. POST /api/eventos/{eventoId}/lotes — Criar lote
+app.MapPost("/api/eventos/{eventoId}/lotes", async (TipoIngressoService service, int eventoId, [FromBody] CriarLoteRequest request) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
+    var resultado = await service.CriarLoteAsync(eventoId, request);
 
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    if (string.IsNullOrWhiteSpace(request.Nome))
-        return Results.BadRequest(new { erro = "Nome do lote é obrigatório." });
-
-    if (request.Nome.Length > 100)
-        return Results.BadRequest(new { erro = "Nome não pode exceder 100 caracteres." });
-
-    if (request.Preco <= 0)
-        return Results.BadRequest(new { erro = "Preço deve ser maior que zero." });
-
-    if (request.Capacidade <= 0)
-        return Results.BadRequest(new { erro = "Capacidade deve ser maior que zero." });
-
-    if (request.TaxaServico < 0)
-        return Results.BadRequest(new { erro = "Taxa de serviço não pode ser negativa." });
-
-    if (request.DataInicioVenda == default)
-        return Results.BadRequest(new { erro = "Data de início da venda é obrigatória." });
-
-    if (request.DataFimVenda == default)
-        return Results.BadRequest(new { erro = "Data de fim da venda é obrigatória." });
-
-    if (request.DataFimVenda <= request.DataInicioVenda)
-        return Results.BadRequest(new { erro = "Data de fim da venda deve ser posterior à data de início." });
-
-    var insertSql = @"
-        INSERT INTO TiposIngresso (EventoId, Nome, Preco, Capacidade, TaxaServico, DataInicioVenda, DataFimVenda)
-        OUTPUT INSERTED.Id
-        VALUES (@EventoId, @Nome, @Preco, @Capacidade, @TaxaServico, @DataInicioVenda, @DataFimVenda)";
-
-    var loteId = await db.QuerySingleAsync<int>(insertSql, new
+    if (!resultado.Sucesso)
     {
-        EventoId = eventoId,
-        request.Nome,
-        request.Preco,
-        request.Capacidade,
-        request.TaxaServico,
-        request.DataInicioVenda,
-        request.DataFimVenda
-    });
-
-    // Registrar preço inicial no histórico
-    await db.ExecuteAsync(@"
-        INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
-        VALUES (@EventoId, @TipoIngressoId, NULL, @PrecoNovo, 'Preço inicial do lote')",
-        new { EventoId = eventoId, TipoIngressoId = loteId, PrecoNovo = request.Preco });
-
-    var response = new LoteResponse
-    {
-        Id = loteId,
-        EventoId = eventoId,
-        Nome = request.Nome,
-        Preco = request.Preco,
-        Capacidade = request.Capacidade,
-        TaxaServico = request.TaxaServico,
-        DataInicioVenda = request.DataInicioVenda,
-        DataFimVenda = request.DataFimVenda
-    };
-
-    return Results.Created($"/api/lotes/{loteId}", response);
-});
-
-// 4.2. Listar lotes de um evento
-app.MapGet("/api/eventos/{eventoId}/lotes", async (IDbConnection db, int eventoId) =>
-{
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT ti.Id, ti.EventoId, ti.Nome, ti.Preco, ti.Capacidade, ti.TaxaServico,
-               ti.DataInicioVenda, ti.DataFimVenda,
-               ISNULL(SUM(CASE WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN 1 ELSE 0 END), 0) AS IngressosVendidos,
-               ti.Capacidade - ISNULL(SUM(CASE WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN 1 ELSE 0 END), 0) AS CapacidadeRestante
-        FROM TiposIngresso ti
-        LEFT JOIN Ingressos ig ON ig.TipoIngressoId = ti.Id
-        WHERE ti.EventoId = @EventoId
-        GROUP BY ti.Id, ti.EventoId, ti.Nome, ti.Preco, ti.Capacidade, ti.TaxaServico,
-                 ti.DataInicioVenda, ti.DataFimVenda
-        ORDER BY ti.Id";
-
-    var lotes = await db.QueryAsync<LoteListaResponse>(sql, new { EventoId = eventoId });
-
-    return Results.Ok(lotes);
-});
-
-// 4.3. Obter lote específico
-app.MapGet("/api/lotes/{loteId}", async (IDbConnection db, int loteId) =>
-{
-    var lote = await db.QuerySingleOrDefaultAsync<LoteResponse>(
-        @"SELECT Id, EventoId, Nome, Preco, Capacidade, TaxaServico, DataInicioVenda, DataFimVenda
-          FROM TiposIngresso WHERE Id = @Id",
-        new { Id = loteId });
-
-    if (lote is null)
-        return Results.NotFound(new { erro = "Lote não encontrado." });
-
-    return Results.Ok(lote);
-});
-
-// 4.4. Atualizar lote
-app.MapPut("/api/lotes/{loteId}", async (IDbConnection db, int loteId, [FromBody] CriarLoteRequest request) =>
-{
-    var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-        "SELECT Id, EventoId, Nome, Preco, Capacidade FROM TiposIngresso WHERE Id = @Id",
-        new { Id = loteId });
-
-    if (lote is null)
-        return Results.NotFound(new { erro = "Lote não encontrado." });
-
-    if (string.IsNullOrWhiteSpace(request.Nome))
-        return Results.BadRequest(new { erro = "Nome do lote é obrigatório." });
-
-    if (request.Nome.Length > 100)
-        return Results.BadRequest(new { erro = "Nome não pode exceder 100 caracteres." });
-
-    if (request.Preco <= 0)
-        return Results.BadRequest(new { erro = "Preço deve ser maior que zero." });
-
-    if (request.TaxaServico < 0)
-        return Results.BadRequest(new { erro = "Taxa de serviço não pode ser negativa." });
-
-    // Verificar se capacidade não é menor que ingressos vendidos
-    var ingressosVendidos = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Ingressos WHERE TipoIngressoId = @TipoIngressoId AND Status IN ('Confirmada', 'Utilizada')",
-        new { TipoIngressoId = loteId });
-
-    if (request.Capacidade < ingressosVendidos)
-        return Results.BadRequest(new { erro = "Capacidade não pode ser menor que a quantidade de ingressos já vendidos para este lote." });
-
-    if (request.DataInicioVenda == default)
-        return Results.BadRequest(new { erro = "Data de início da venda é obrigatória." });
-
-    if (request.DataFimVenda == default)
-        return Results.BadRequest(new { erro = "Data de fim da venda é obrigatória." });
-
-    if (request.DataFimVenda <= request.DataInicioVenda)
-        return Results.BadRequest(new { erro = "Data de fim da venda deve ser posterior à data de início." });
-
-    // Registrar alteração de preço no histórico se mudou
-    if (lote.Preco != request.Preco)
-    {
-        await db.ExecuteAsync(@"
-            INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
-            VALUES (@EventoId, @TipoIngressoId, @PrecoAnterior, @PrecoNovo, 'Alteração de preço do lote')",
-            new
-            {
-                EventoId = lote.EventoId,
-                TipoIngressoId = loteId,
-                PrecoAnterior = lote.Preco,
-                PrecoNovo = request.Preco
-            });
+        if (resultado.StatusCode == 404)
+            return Results.NotFound(new { erro = resultado.Erro });
+        return Results.BadRequest(new { erro = resultado.Erro });
     }
 
-    await db.ExecuteAsync(@"
-        UPDATE TiposIngresso
-        SET Nome = @Nome, Preco = @Preco, Capacidade = @Capacidade,
-            TaxaServico = @TaxaServico, DataInicioVenda = @DataInicioVenda,
-            DataFimVenda = @DataFimVenda
-        WHERE Id = @Id",
-        new
-        {
-            Id = loteId,
-            request.Nome,
-            request.Preco,
-            request.Capacidade,
-            request.TaxaServico,
-            request.DataInicioVenda,
-            request.DataFimVenda
-        });
-
-    var response = new LoteResponse
-    {
-        Id = loteId,
-        EventoId = lote.EventoId,
-        Nome = request.Nome,
-        Preco = request.Preco,
-        Capacidade = request.Capacidade,
-        TaxaServico = request.TaxaServico,
-        DataInicioVenda = request.DataInicioVenda,
-        DataFimVenda = request.DataFimVenda
-    };
-
-    return Results.Ok(response);
+    return Results.Created($"/api/lotes/{resultado.Id}", resultado.Lote);
 });
 
-// 4.5. Remover lote
-app.MapDelete("/api/lotes/{loteId}", async (IDbConnection db, int loteId) =>
+// 2. GET /api/eventos/{eventoId}/lotes — Listar lotes
+app.MapGet("/api/eventos/{eventoId}/lotes", async (TipoIngressoService service, int eventoId) =>
 {
-    var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-        "SELECT Id FROM TiposIngresso WHERE Id = @Id",
-        new { Id = loteId });
+    var resultado = await service.ListarLotesAsync(eventoId);
 
-    if (lote is null)
-        return Results.NotFound(new { erro = "Lote não encontrado." });
+    if (!resultado.Sucesso)
+        return Results.NotFound(new { erro = resultado.Erro });
 
-    // Verificar se lote possui ingressos vendidos
-    var ingressosVendidos = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Ingressos WHERE TipoIngressoId = @TipoIngressoId AND Status IN ('Confirmada', 'Utilizada')",
-        new { TipoIngressoId = loteId });
+    return Results.Ok(resultado.Lotes);
+});
 
-    if (ingressosVendidos > 0)
-        return Results.Conflict(new { erro = "Não é possível remover um lote com ingressos vendidos." });
+// 3. GET /api/lotes/{loteId} — Obter lote específico
+app.MapGet("/api/lotes/{loteId}", async (TipoIngressoService service, int loteId) =>
+{
+    var resultado = await service.ObterLoteAsync(loteId);
 
-    // Remove registros de histórico associados
-    await db.ExecuteAsync("DELETE FROM HistoricoPrecos WHERE TipoIngressoId = @Id", new { Id = loteId });
-    await db.ExecuteAsync("DELETE FROM TiposIngresso WHERE Id = @Id", new { Id = loteId });
+    if (!resultado.Sucesso)
+        return Results.NotFound(new { erro = resultado.Erro });
+
+    return Results.Ok(resultado.Lote);
+});
+
+// 4. PUT /api/lotes/{loteId} — Atualizar lote
+app.MapPut("/api/lotes/{loteId}", async (TipoIngressoService service, int loteId, [FromBody] CriarLoteRequest request) =>
+{
+    var resultado = await service.AtualizarLoteAsync(loteId, request);
+
+    if (!resultado.Sucesso)
+    {
+        if (resultado.StatusCode == 404)
+            return Results.NotFound(new { erro = resultado.Erro });
+        return Results.BadRequest(new { erro = resultado.Erro });
+    }
+
+    return Results.Ok(resultado.Lote);
+});
+
+// 5. DELETE /api/lotes/{loteId} — Remover lote
+app.MapDelete("/api/lotes/{loteId}", async (TipoIngressoService service, int loteId) =>
+{
+    var resultado = await service.RemoverLoteAsync(loteId);
+
+    if (!resultado.Sucesso)
+    {
+        if (resultado.StatusCode == 404)
+            return Results.NotFound(new { erro = resultado.Erro });
+        if (resultado.StatusCode == 409)
+            return Results.Conflict(new { erro = resultado.Erro });
+        return Results.BadRequest(new { erro = resultado.Erro });
+    }
 
     return Results.NoContent();
 });
 
-// ==========================================================
-// NOVOS ENDPOINTS: Tipos de Ingresso (via /api/tipos-ingresso)
-// ==========================================================
-
-// Criar tipo de ingresso
-app.MapPost("/api/tipos-ingresso", async (IDbConnection db, [FromBody] CriarTipoIngressoRequest request) =>
+// 6. POST /api/tipos-ingresso — Criar tipo de ingresso
+app.MapPost("/api/tipos-ingresso", async (TipoIngressoService service, [FromBody] CriarTipoIngressoRequest request) =>
 {
-    // Valida EventoId existente
-    if (request.EventoId <= 0)
-        return Results.BadRequest(new { erro = "EventoId é obrigatório e deve ser maior que zero." });
+    var resultado = await service.CriarTipoIngressoAsync(request);
 
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = request.EventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    // Valida Nome
-    if (string.IsNullOrWhiteSpace(request.Nome))
-        return Results.BadRequest(new { erro = "Nome é obrigatório." });
-
-    if (request.Nome.Length > 100)
-        return Results.BadRequest(new { erro = "Nome não pode exceder 100 caracteres." });
-
-    // Valida QuantidadeDisponivel
-    if (request.QuantidadeDisponivel <= 0)
-        return Results.BadRequest(new { erro = "QuantidadeDisponivel deve ser maior que zero." });
-
-    // Valida Preco
-    if (request.Preco < 0)
-        return Results.BadRequest(new { erro = "Preco não pode ser negativo." });
-
-    // Valida Lote
-    if (string.IsNullOrWhiteSpace(request.Lote))
-        return Results.BadRequest(new { erro = "Lote é obrigatório." });
-
-    if (request.Lote.Length > 100)
-        return Results.BadRequest(new { erro = "Lote não pode exceder 100 caracteres." });
-
-    var insertSql = @"
-        INSERT INTO TiposIngresso (EventoId, Nome, Preco, Capacidade, TaxaServico, DataInicioVenda, DataFimVenda, Lote)
-        OUTPUT INSERTED.Id
-        VALUES (@EventoId, @Nome, @Preco, @Capacidade, 0.00, GETDATE(), '9999-12-31', @Lote)";
-
-    var tipoId = await db.QuerySingleAsync<int>(insertSql, new
+    if (!resultado.Sucesso)
     {
-        EventoId = request.EventoId,
-        Nome = request.Nome,
-        Preco = request.Preco,
-        Capacidade = request.QuantidadeDisponivel,
-        Lote = request.Lote
-    });
+        if (resultado.StatusCode == 404)
+            return Results.NotFound(new { erro = resultado.Erro });
+        return Results.BadRequest(new { erro = resultado.Erro });
+    }
 
-    // Registra preço inicial no histórico
-    await db.ExecuteAsync(@"
-        INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
-        VALUES (@EventoId, @TipoIngressoId, NULL, @PrecoNovo, 'Preço inicial do tipo de ingresso')",
-        new
-        {
-            EventoId = request.EventoId,
-            TipoIngressoId = tipoId,
-            PrecoNovo = request.Preco
-        });
-
-    var response = new TipoIngressoResponse
-    {
-        Id = tipoId,
-        EventoId = request.EventoId,
-        Nome = request.Nome,
-        QuantidadeDisponivel = request.QuantidadeDisponivel,
-        Preco = request.Preco,
-        Lote = request.Lote
-    };
-
-    return Results.Created($"/api/tipos-ingresso/{tipoId}", response);
+    return Results.Created($"/api/tipos-ingresso/{resultado.Id}", resultado.TipoIngresso);
 });
 
-// Listar tipos de ingresso de um evento
-app.MapGet("/api/eventos/{eventoId}/tipos-ingresso", async (IDbConnection db, int eventoId) =>
+// 7. GET /api/eventos/{eventoId}/tipos-ingresso — Listar tipos de ingresso
+app.MapGet("/api/eventos/{eventoId}/tipos-ingresso", async (TipoIngressoService service, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
+    var resultado = await service.ListarTiposIngressoAsync(eventoId);
 
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
+    if (!resultado.Sucesso)
+        return Results.NotFound(new { erro = resultado.Erro });
 
-    var sql = @"
-        SELECT Id, EventoId, Nome, Capacidade AS QuantidadeDisponivel, Preco, Lote
-        FROM TiposIngresso
-        WHERE EventoId = @EventoId
-        ORDER BY Id";
-
-    var tipos = await db.QueryAsync<TipoIngressoResponse>(sql, new { EventoId = eventoId });
-
-    return Results.Ok(tipos);
+    return Results.Ok(resultado.Tipos);
 });
 
 // ==========================================================

@@ -25,4 +25,17 @@ public interface IHistoricoPrecoRepository
     /// </summary>
     Task<IEnumerable<HistoricoPrecoResponse>> ObterPorLoteIdAsync(int loteId,
         IDbTransaction? transaction = null);
+
+    /// <summary>
+    /// Insere um registro genérico no histórico de preços.
+    /// Usado ao criar lotes, tipos-ingresso ou alterar preços.
+    /// </summary>
+    Task InserirHistoricoAsync(int eventoId, int tipoIngressoId, decimal? precoAnterior,
+        decimal precoNovo, string motivo, IDbTransaction? transaction = null);
+
+    /// <summary>
+    /// Remove todos os registros de histórico associados a um lote/tipo-ingresso.
+    /// </summary>
+    Task ExcluirPorLoteIdAsync(int tipoIngressoId,
+        IDbTransaction? transaction = null);
 }

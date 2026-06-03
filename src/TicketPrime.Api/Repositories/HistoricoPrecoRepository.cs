@@ -52,4 +52,31 @@ public class HistoricoPrecoRepository : IHistoricoPrecoRepository
             new { TipoIngressoId = loteId },
             transaction: transaction);
     }
+
+    public async Task InserirHistoricoAsync(int eventoId, int tipoIngressoId,
+        decimal? precoAnterior, decimal precoNovo, string motivo,
+        IDbTransaction? transaction = null)
+    {
+        await _db.ExecuteAsync(@"
+            INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
+            VALUES (@EventoId, @TipoIngressoId, @PrecoAnterior, @PrecoNovo, @Motivo)",
+            new
+            {
+                EventoId = eventoId,
+                TipoIngressoId = tipoIngressoId,
+                PrecoAnterior = precoAnterior,
+                PrecoNovo = precoNovo,
+                Motivo = motivo
+            },
+            transaction: transaction);
+    }
+
+    public async Task ExcluirPorLoteIdAsync(int tipoIngressoId,
+        IDbTransaction? transaction = null)
+    {
+        await _db.ExecuteAsync(
+            "DELETE FROM HistoricoPrecos WHERE TipoIngressoId = @TipoIngressoId",
+            new { TipoIngressoId = tipoIngressoId },
+            transaction: transaction);
+    }
 }
