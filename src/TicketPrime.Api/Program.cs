@@ -5,6 +5,8 @@ using System.Data;
 using TicketPrime.Api.Authentication;
 using TicketPrime.Api.Middleware;
 using TicketPrime.Api.Models;
+using TicketPrime.Api.Repositories;
+using TicketPrime.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +15,9 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 
 builder.Services.AddScoped<IDbConnection>(sp =>
     new SqlConnection(connectionString));
+
+builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
+builder.Services.AddScoped<UsuarioService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -414,53 +419,12 @@ app.MapGet("/", () => Results.Redirect("/index.html"));
 // ENDPOINTS EXISTENTES (preservados)
 // ==========================================================
 
-app.MapPost("/api/usuarios", async (IDbConnection db, [FromBody] UsuarioRequest request) =>
+app.MapPost("/api/usuarios", async (UsuarioService service, [FromBody] UsuarioRequest request) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Cpf))
-        return Results.BadRequest(new { erro = "CPF é obrigatório." });
-
-    if (!request.Cpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter apenas números." });
-
-    if (request.Cpf.Length != 11)
-        return Results.BadRequest(new { erro = "CPF deve ter 11 dígitos." });
-
-    if (string.IsNullOrWhiteSpace(request.Nome))
-        return Results.BadRequest(new { erro = "Nome é obrigatório." });
-
-    if (request.Nome.Length > 100)
-        return Results.BadRequest(new { erro = "Nome não pode exceder 100 caracteres." });
-
-    if (string.IsNullOrWhiteSpace(request.Email))
-        return Results.BadRequest(new { erro = "Email é obrigatório." });
-
-    if (request.Email.Length > 150)
-        return Results.BadRequest(new { erro = "Email não pode exceder 150 caracteres." });
-
-    if (!request.Email.Contains('@') ||
-        request.Email.IndexOf('@') == 0 ||
-        request.Email.IndexOf('@') == request.Email.Length - 1)
-        return Results.BadRequest(new { erro = "Email inválido." });
-
-    var existe = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Usuarios WHERE Cpf = @Cpf",
-        new { request.Cpf });
-
-    if (existe > 0)
-        return Results.BadRequest(new { erro = "CPF já cadastrado." });
-
-    await db.ExecuteAsync(
-        "INSERT INTO Usuarios (Cpf, Nome, Email) VALUES (@Cpf, @Nome, @Email)",
-        new { request.Cpf, request.Nome, request.Email });
-
-    var usuario = new Usuario
-    {
-        Cpf = request.Cpf,
-        Nome = request.Nome,
-        Email = request.Email
-    };
-
-    return Results.Created($"/api/usuarios/{request.Cpf}", usuario);
+    var resultado = await service.CriarAsync(request);
+    return resultado.Sucesso
+        ? Results.Created($"/api/usuarios/{resultado.Cpf}", resultado.Usuario)
+        : Results.BadRequest(new { erro = resultado.Erro });
 });
 
 app.MapPost("/api/eventos", async (IDbConnection db, [FromBody] EventoRequest request) =>
