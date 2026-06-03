@@ -19,6 +19,9 @@ builder.Services.AddScoped<IDbConnection>(sp =>
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<UsuarioService>();
 
+builder.Services.AddScoped<ICupomRepository, CupomRepository>();
+builder.Services.AddScoped<CupomService>();
+
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -646,39 +649,12 @@ app.MapGet("/api/eventos", async (IDbConnection db) =>
     return Results.Ok(eventos);
 });
 
-app.MapPost("/api/cupons", async (IDbConnection db, [FromBody] CupomRequest request) =>
+app.MapPost("/api/cupons", async (CupomService service, [FromBody] CupomRequest request) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Codigo))
-        return Results.BadRequest(new { erro = "Código é obrigatório." });
-
-    if (request.Codigo.Length > 50)
-        return Results.BadRequest(new { erro = "Código não pode exceder 50 caracteres." });
-
-    if (request.PorcentagemDesconto <= 0)
-        return Results.BadRequest(new { erro = "PorcentagemDesconto deve ser maior que zero." });
-
-    if (request.ValorMinimoRegra < 0)
-        return Results.BadRequest(new { erro = "ValorMinimoRegra não pode ser negativo." });
-
-    var existe = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Cupons WHERE Codigo = @Codigo",
-        new { request.Codigo });
-
-    if (existe > 0)
-        return Results.BadRequest(new { erro = "Código já existe." });
-
-    await db.ExecuteAsync(
-        "INSERT INTO Cupons (Codigo, PorcentagemDesconto, ValorMinimoRegra) VALUES (@Codigo, @PorcentagemDesconto, @ValorMinimoRegra)",
-        new { request.Codigo, request.PorcentagemDesconto, request.ValorMinimoRegra });
-
-    var cupom = new Cupom
-    {
-        Codigo = request.Codigo,
-        PorcentagemDesconto = request.PorcentagemDesconto,
-        ValorMinimoRegra = request.ValorMinimoRegra
-    };
-
-    return Results.Created($"/api/cupons/{request.Codigo}", cupom);
+    var resultado = await service.CriarAsync(request);
+    return resultado.Sucesso
+        ? Results.Created($"/api/cupons/{resultado.Codigo}", resultado.Cupom)
+        : Results.BadRequest(new { erro = resultado.Erro });
 });
 
 app.MapGet("/api/reservas/{cpf}", async (IDbConnection db, string cpf) =>
