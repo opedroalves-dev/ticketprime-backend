@@ -1,5 +1,6 @@
 using Dapper;
 using System.Data;
+using TicketPrime.Api.Models;
 
 namespace TicketPrime.Api.Repositories;
 
@@ -19,6 +20,36 @@ public class HistoricoPrecoRepository : IHistoricoPrecoRepository
             INSERT INTO HistoricoPrecos (EventoId, TipoIngressoId, PrecoAnterior, PrecoNovo, Motivo)
             VALUES (@EventoId, NULL, NULL, @PrecoNovo, 'Preço inicial do evento')",
             new { EventoId = eventoId, PrecoNovo = precoNovo },
+            transaction: transaction);
+    }
+
+    public async Task<IEnumerable<HistoricoPrecoResponse>> ObterPorEventoIdAsync(
+        int eventoId, IDbTransaction? transaction = null)
+    {
+        var sql = @"
+            SELECT hp.Id, hp.PrecoAnterior, hp.PrecoNovo, hp.DataAlteracao, hp.Motivo,
+                   hp.TipoIngressoId, ti.Nome AS NomeLote
+            FROM HistoricoPrecos hp
+            LEFT JOIN TiposIngresso ti ON ti.Id = hp.TipoIngressoId
+            WHERE hp.EventoId = @EventoId
+            ORDER BY hp.DataAlteracao DESC";
+
+        return await _db.QueryAsync<HistoricoPrecoResponse>(sql,
+            new { EventoId = eventoId },
+            transaction: transaction);
+    }
+
+    public async Task<IEnumerable<HistoricoPrecoResponse>> ObterPorLoteIdAsync(
+        int loteId, IDbTransaction? transaction = null)
+    {
+        var sql = @"
+            SELECT Id, PrecoAnterior, PrecoNovo, DataAlteracao, Motivo
+            FROM HistoricoPrecos
+            WHERE TipoIngressoId = @TipoIngressoId
+            ORDER BY DataAlteracao DESC";
+
+        return await _db.QueryAsync<HistoricoPrecoResponse>(sql,
+            new { TipoIngressoId = loteId },
             transaction: transaction);
     }
 }

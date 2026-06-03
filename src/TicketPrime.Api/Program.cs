@@ -23,7 +23,9 @@ builder.Services.AddScoped<CupomService>();
 
 builder.Services.AddScoped<IEventoRepository, EventoRepository>();
 builder.Services.AddScoped<IHistoricoPrecoRepository, HistoricoPrecoRepository>();
+builder.Services.AddScoped<ITipoIngressoRepository, TipoIngressoRepository>();
 builder.Services.AddScoped<EventoService>();
+builder.Services.AddScoped<HistoricoPrecoService>();
 
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
@@ -1803,67 +1805,23 @@ app.MapPost("/api/carrinho/{cpf}/confirmar", async (IDbConnection db, string cpf
 // ==========================================================
 
 // 6.1. Histórico de preços do evento
-app.MapGet("/api/eventos/{eventoId}/historico-precos", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/eventos/{eventoId}/historico-precos",
+    async (HistoricoPrecoService service, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT hp.Id, hp.PrecoAnterior, hp.PrecoNovo, hp.DataAlteracao, hp.Motivo,
-               hp.TipoIngressoId, ti.Nome AS NomeLote
-        FROM HistoricoPrecos hp
-        LEFT JOIN TiposIngresso ti ON ti.Id = hp.TipoIngressoId
-        WHERE hp.EventoId = @EventoId
-        ORDER BY hp.DataAlteracao DESC";
-
-    var historico = await db.QueryAsync<HistoricoPrecoResponse>(sql, new { EventoId = eventoId });
-
-    var response = new EventoHistoricoPrecosResponse
-    {
-        EventoId = eventoId,
-        NomeEvento = evento.Nome,
-        Historico = historico.AsList()
-    };
-
-    return Results.Ok(response);
+    var resultado = await service.ObterPorEventoIdAsync(eventoId);
+    return resultado is null
+        ? Results.NotFound(new { erro = "Evento não encontrado." })
+        : Results.Ok(resultado);
 });
 
 // 6.2. Histórico de preços do lote
-app.MapGet("/api/lotes/{loteId}/historico-precos", async (IDbConnection db, int loteId) =>
+app.MapGet("/api/lotes/{loteId}/historico-precos",
+    async (HistoricoPrecoService service, int loteId) =>
 {
-    var lote = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-        "SELECT Id, Nome, EventoId FROM TiposIngresso WHERE Id = @Id",
-        new { Id = loteId });
-
-    if (lote is null)
-        return Results.NotFound(new { erro = "Lote não encontrado." });
-
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = lote.EventoId });
-
-    var sql = @"
-        SELECT Id, PrecoAnterior, PrecoNovo, DataAlteracao, Motivo
-        FROM HistoricoPrecos
-        WHERE TipoIngressoId = @TipoIngressoId
-        ORDER BY DataAlteracao DESC";
-
-    var historico = await db.QueryAsync<HistoricoPrecoResponse>(sql, new { TipoIngressoId = loteId });
-
-    var response = new LoteHistoricoPrecosResponse
-    {
-        LoteId = loteId,
-        NomeLote = lote.Nome,
-        EventoId = lote.EventoId,
-        NomeEvento = evento?.Nome ?? "",
-        Historico = historico.AsList()
-    };
-
-    return Results.Ok(response);
+    var resultado = await service.ObterPorLoteIdAsync(loteId);
+    return resultado is null
+        ? Results.NotFound(new { erro = "Lote não encontrado." })
+        : Results.Ok(resultado);
 });
 
 // ==========================================================
