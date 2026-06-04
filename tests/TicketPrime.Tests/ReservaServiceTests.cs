@@ -5,8 +5,6 @@ namespace TicketPrime.Tests;
 
 public class ReservaServiceTests
 {
-    private readonly ReservaService _service = new();
-
     #region Dados Compartilhados
 
     private static List<Usuario> UsuariosPadrao => new()
@@ -53,7 +51,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "00000000000",
             eventoId: 1,
             codigoCupom: null,
@@ -75,7 +73,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 999,
             codigoCupom: null,
@@ -103,7 +101,7 @@ public class ReservaServiceTests
         };
 
         // Act: tentar a 3ª reserva
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 1,
             codigoCupom: null,
@@ -126,7 +124,7 @@ public class ReservaServiceTests
         };
 
         // Act: tentar a 2ª reserva (limite é 2, então deve permitir)
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 1,
             codigoCupom: null,
@@ -151,7 +149,7 @@ public class ReservaServiceTests
             new() { Id = 1, UsuarioCpf = "12345678901", EventoId = 2, ValorFinalPago = 80m }
         };
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "98765432100",
             eventoId: 2,
             codigoCupom: null,
@@ -169,7 +167,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 2,
             codigoCupom: null,
@@ -205,7 +203,7 @@ public class ReservaServiceTests
             ValorMinimoRegra = valorMinimoRegra
         };
 
-        var resultado = _service.CupomPodeSerAplicado(precoPadrao, cupom);
+        var resultado = RegrasReserva.CupomPodeSerAplicado(precoPadrao, cupom);
 
         Assert.Equal(esperado, resultado);
     }
@@ -234,7 +232,7 @@ public class ReservaServiceTests
             }
         };
 
-        var valorFinal = _service.CalcularValorFinal(precoPadrao, codigoCupom, cupons);
+        var valorFinal = RegrasReserva.CalcularValorFinal(precoPadrao, codigoCupom, cupons);
 
         Assert.Equal(valorFinalEsperado, valorFinal);
     }
@@ -261,7 +259,7 @@ public class ReservaServiceTests
             new() { Codigo = "DESC20", PorcentagemDesconto = 20m, ValorMinimoRegra = 0m }
         };
 
-        var valorFinal = _service.CalcularValorFinal(precoPadrao, codigoCupom, cupons);
+        var valorFinal = RegrasReserva.CalcularValorFinal(precoPadrao, codigoCupom, cupons);
 
         Assert.Equal(valorFinalEsperado, valorFinal);
     }
@@ -271,7 +269,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 1,
             codigoCupom: "DESC10",
@@ -293,7 +291,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 1,
             codigoCupom: null,
@@ -316,7 +314,7 @@ public class ReservaServiceTests
     {
         var reservas = new List<Reserva>();
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 1,
             codigoCupom: "CUPOM_INEXISTENTE",
@@ -340,7 +338,7 @@ public class ReservaServiceTests
             new() { Id = 2, UsuarioCpf = "12345678901", EventoId = 1, ValorFinalPago = 150m }
         };
 
-        var resultado = _service.ValidarReserva(
+        var resultado = RegrasReserva.ValidarReserva(
             usuarioCpf: "12345678901",
             eventoId: 2,
             codigoCupom: null,
@@ -369,7 +367,7 @@ public class ReservaServiceTests
             ValorFinalPago = 135m
         };
 
-        var response = _service.ConstruirReservaResponse(reserva, EventosPadrao);
+        var response = RegrasReserva.ConstruirReservaResponse(reserva, EventosPadrao);
 
         Assert.NotNull(response);
         Assert.Equal("Show de Rock", response.NomeEvento);
@@ -390,7 +388,7 @@ public class ReservaServiceTests
             ValorFinalPago = 150m
         };
 
-        var response = _service.ConstruirReservaResponse(reserva, EventosPadrao);
+        var response = RegrasReserva.ConstruirReservaResponse(reserva, EventosPadrao);
 
         Assert.Null(response);
     }
