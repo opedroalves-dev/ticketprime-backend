@@ -27,7 +27,9 @@ builder.Services.AddScoped<ITipoIngressoRepository, TipoIngressoRepository>();
 builder.Services.AddScoped<EventoService>();
 builder.Services.AddScoped<HistoricoPrecoService>();
 builder.Services.AddScoped<IIngressoRepository, IngressoRepository>();
+builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<TipoIngressoService>();
+builder.Services.AddScoped<IngressoService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -652,183 +654,36 @@ app.MapGet("/api/reservas/{cpf}", async (IDbConnection db, string cpf) =>
 // ==========================================================
 
 // 2.1. Gerar ingresso para reserva existente
-app.MapPost("/api/reservas/{id}/ingresso", async (IDbConnection db, int id) =>
+app.MapPost("/api/reservas/{id}/ingresso", async (IngressoService service, int id) =>
 {
-    // Verificar se reserva existe
-    var reserva = await db.QuerySingleOrDefaultAsync<Reserva>(
-        "SELECT Id, UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago FROM Reservas WHERE Id = @Id",
-        new { Id = id });
+    var (response, erro, statusCode) = await service.GerarIngressoAsync(id);
 
-    if (reserva is null)
-        return Results.NotFound(new { erro = "Reserva não encontrada." });
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
-    // Verificar se reserva já possui ingresso
-    var ingressoExistente = await db.QuerySingleOrDefaultAsync<Ingresso>(
-        "SELECT Id FROM Ingressos WHERE ReservaId = @ReservaId",
-        new { ReservaId = id });
-
-    if (ingressoExistente is not null)
-        return Results.Conflict(new { erro = "Reserva já possui ingresso gerado." });
-
-    // Obter evento vinculado
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome, PrecoPadrao FROM Eventos WHERE Id = @Id",
-        new { Id = reserva.EventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento vinculado à reserva não encontrado." });
-
-    // Gerar código único de 8 caracteres
-    var codigoUnico = await GerarCodigoUnicoAsync(db);
-
-    // Calcular valores
-    decimal valorBruto = evento.PrecoPadrao;
-    decimal valorDesconto = 0;
-    decimal taxaServico = 0;
-    decimal valorFinal = valorBruto;
-
-    // Se a reserva usou cupom, calcular desconto
-    if (!string.IsNullOrWhiteSpace(reserva.CupomUtilizado))
-    {
-        var cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
-            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
-            new { Codigo = reserva.CupomUtilizado });
-
-        if (cupom is not null && evento.PrecoPadrao >= cupom.ValorMinimoRegra)
-        {
-            valorDesconto = evento.PrecoPadrao * cupom.PorcentagemDesconto / 100m;
-        }
-    }
-
-    valorFinal = valorBruto - valorDesconto; // TaxaServico não incluída no ValorFinal
-
-    var insertSql = @"
-        INSERT INTO Ingressos (ReservaId, TipoIngressoId, CodigoUnico, Status, ValorBruto, ValorDesconto, TaxaServico, ValorFinal, DataCriacao)
-        OUTPUT INSERTED.Id, INSERTED.DataCriacao
-        VALUES (@ReservaId, NULL, @CodigoUnico, 'Confirmada', @ValorBruto, @ValorDesconto, @TaxaServico, @ValorFinal, GETDATE())";
-
-    var result = await db.QuerySingleAsync(insertSql, new
-    {
-        ReservaId = id,
-        CodigoUnico = codigoUnico,
-        ValorBruto = valorBruto,
-        ValorDesconto = valorDesconto,
-        TaxaServico = taxaServico,
-        ValorFinal = valorFinal
-    });
-
-    int ingressoId = (int)result.Id;
-    DateTime dataCriacao = (DateTime)result.DataCriacao;
-
-    var response = new IngressoResponse
-    {
-        Id = ingressoId,
-        ReservaId = id,
-        TipoIngressoId = null,
-        CodigoUnico = codigoUnico,
-        Status = "Confirmada",
-        ValorBruto = valorBruto,
-        ValorDesconto = valorDesconto,
-        TaxaServico = taxaServico,
-        ValorFinal = valorFinal,
-        DataCriacao = dataCriacao
-    };
-
-    return Results.Created($"/api/ingressos/{codigoUnico}", response);
+    return Results.Created($"/api/ingressos/{response.CodigoUnico}", response);
 });
 
 // 2.2. Consultar ingresso por código único (8 caracteres) ou por ID da reserva (numérico)
-app.MapGet("/api/ingressos/{param}", async (IDbConnection db, string param) =>
+app.MapGet("/api/ingressos/{param}", async (IngressoService service, string param) =>
 {
-    // Se o parâmetro for numérico, consulta por ReservaId
-    if (int.TryParse(param, out int reservaId))
-    {
-        // Verificar se a reserva existe
-        var reserva = await db.QuerySingleOrDefaultAsync<Reserva>(
-            "SELECT Id, UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago FROM Reservas WHERE Id = @Id",
-            new { Id = reservaId });
+    var (response, erro, statusCode) = await service.ConsultarIngressoAsync(param);
 
-        if (reserva is null)
-            return Results.NotFound(new { erro = "Reserva não encontrada." });
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
-        // Buscar ingresso vinculado à reserva com dados do evento
-        var sql = @"
-            SELECT i.Id, i.ReservaId, i.CodigoUnico AS CodigoIngresso, i.Status,
-                   i.ValorFinal, i.DataCriacao,
-                   e.Nome AS NomeEvento, e.DataEvento,
-                   r.UsuarioCpf
-            FROM Ingressos i
-            INNER JOIN Reservas r ON r.Id = i.ReservaId
-            INNER JOIN Eventos e ON e.Id = r.EventoId
-            WHERE i.ReservaId = @ReservaId";
-
-        var ingresso = await db.QuerySingleOrDefaultAsync<IngressoPorReservaResponse>(
-            sql,
-            new { ReservaId = reservaId });
-
-        if (ingresso is null)
-            return Results.NotFound(new { erro = "Nenhum ingresso gerado para esta reserva." });
-
-        return Results.Ok(ingresso);
-    }
-
-    // Caso contrário, consulta pelo código único de 8 caracteres
-    if (param.Length != 8)
-        return Results.BadRequest(new { erro = "Código deve ter 8 caracteres." });
-
-    var sqlDetalhado = @"
-        SELECT i.Id, i.ReservaId, i.TipoIngressoId, i.CodigoUnico, i.Status,
-               i.ValorBruto, i.ValorDesconto, i.TaxaServico, i.ValorFinal, i.DataCriacao,
-               ti.Id, ti.Nome, ti.Preco,
-               e.Id, e.Nome, e.DataEvento,
-               u.Cpf, u.Nome
-        FROM Ingressos i
-        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
-        INNER JOIN Reservas r ON r.Id = i.ReservaId
-        INNER JOIN Eventos e ON e.Id = r.EventoId
-        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
-        WHERE i.CodigoUnico = @Codigo";
-
-    var resultado = await db.QueryAsync<IngressoDetalhadoResponse, TipoIngressoResumo, EventoResumo, UsuarioResumo, IngressoDetalhadoResponse>(
-        sqlDetalhado,
-        (ingresso, tipoIngresso, evento, usuario) =>
-        {
-            ingresso.TipoIngresso = tipoIngresso?.Id > 0 ? tipoIngresso : null;
-            ingresso.Evento = evento;
-            ingresso.Usuario = usuario;
-            return ingresso;
-        },
-        new { Codigo = param },
-        splitOn: "Id,Id,Cpf");
-
-    var ingressoDetalhado = resultado.FirstOrDefault();
-
-    if (ingressoDetalhado is null)
-        return Results.NotFound(new { erro = "Ingresso não encontrado." });
-
-    return Results.Ok(ingressoDetalhado);
+    return Results.Ok(response);
 });
 
 // 2.3. Consultar ingresso por reserva
-app.MapGet("/api/reservas/{id}/ingresso", async (IDbConnection db, int id) =>
+app.MapGet("/api/reservas/{id}/ingresso", async (IngressoService service, int id) =>
 {
-    var reserva = await db.QuerySingleOrDefaultAsync<Reserva>(
-        "SELECT Id FROM Reservas WHERE Id = @Id",
-        new { Id = id });
+    var (response, erro, statusCode) = await service.ObterPorReservaAsync(id);
 
-    if (reserva is null)
-        return Results.NotFound(new { erro = "Reserva não encontrada." });
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
-    var ingresso = await db.QuerySingleOrDefaultAsync<IngressoResponse>(
-        @"SELECT Id, ReservaId, TipoIngressoId, CodigoUnico, Status,
-                  ValorBruto, ValorDesconto, TaxaServico, ValorFinal, DataCriacao
-           FROM Ingressos WHERE ReservaId = @ReservaId",
-        new { ReservaId = id });
-
-    if (ingresso is null)
-        return Results.NotFound(new { erro = "Nenhum ingresso gerado para esta reserva." });
-
-    return Results.Ok(ingresso);
+    return Results.Ok(response);
 });
 
 // ==========================================================
@@ -1373,7 +1228,7 @@ app.MapDelete("/api/carrinho/{cpf}", async (IDbConnection db, string cpf) =>
 });
 
 // 5.4. Confirmar carrinho
-app.MapPost("/api/carrinho/{cpf}/confirmar", async (IDbConnection db, string cpf, [FromBody] ConfirmarCarrinhoRequest? request) =>
+app.MapPost("/api/carrinho/{cpf}/confirmar", async (IDbConnection db, IIngressoRepository ingressoRepository, string cpf, [FromBody] ConfirmarCarrinhoRequest? request) =>
 {
     if (cpf.Length != 11 || !cpf.All(char.IsDigit))
         return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
@@ -1508,7 +1363,7 @@ app.MapPost("/api/carrinho/{cpf}/confirmar", async (IDbConnection db, string cpf
                     transaction: transaction, commandTimeout: 30);
 
                 // Gerar código único para o ingresso
-                var codigoUnico = await GerarCodigoUnicoAsync(db, transaction, 30);
+                var codigoUnico = await ingressoRepository.GerarCodigoUnicoAsync(transaction, 30);
 
                 // Criar ingresso
                 var ingressoId = await db.QuerySingleAsync<int>(@"
@@ -1832,27 +1687,5 @@ app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (IDbConnection db, in
 
     return Results.Ok(reservas);
 }).RequireAuthorization();
-
-// ==========================================================
-// MÉTODOS AUXILIARES
-// ==========================================================
-
-static async Task<string> GerarCodigoUnicoAsync(IDbConnection db, IDbTransaction? transaction = null, int? commandTimeout = 30)
-{
-    const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    var random = Random.Shared;
-    string codigo;
-
-    do
-    {
-        codigo = new string(Enumerable.Range(0, 8).Select(_ => chars[random.Next(chars.Length)]).ToArray());
-    }
-    while (await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Ingressos WHERE CodigoUnico = @Codigo",
-        new { Codigo = codigo },
-        transaction: transaction, commandTimeout: commandTimeout) > 0);
-
-    return codigo;
-}
 
 app.Run();
