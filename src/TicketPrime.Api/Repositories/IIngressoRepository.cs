@@ -25,7 +25,7 @@ public interface IIngressoRepository
 
     /// <summary>
     /// Retorna um ingresso pelo código único.
-    /// Reservado para uso na Etapa 11b (consulta direta por código no contexto de admin/cancelamento).
+    /// Usado pelo CheckInService (Etapa 9) para validar existência antes do check-in.
     /// </summary>
     Task<Ingresso?> ObterPorCodigoAsync(string codigo,
         IDbTransaction? transaction = null);
@@ -58,4 +58,11 @@ public interface IIngressoRepository
     /// </summary>
     Task<string> GerarCodigoUnicoAsync(IDbTransaction? transaction = null,
         int? commandTimeout = 30);
+
+    /// <summary>
+    /// Atualiza o status de um ingresso.
+    /// Usado pelo fluxo de check-in para alterar de "Confirmada" para "Utilizada".
+    /// </summary>
+    Task AtualizarStatusAsync(int id, string status,
+        IDbTransaction? transaction = null);
 }

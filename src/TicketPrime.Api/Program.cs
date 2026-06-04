@@ -28,8 +28,10 @@ builder.Services.AddScoped<EventoService>();
 builder.Services.AddScoped<HistoricoPrecoService>();
 builder.Services.AddScoped<IIngressoRepository, IngressoRepository>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
+builder.Services.AddScoped<ICheckInRepository, CheckInRepository>();
 builder.Services.AddScoped<TipoIngressoService>();
 builder.Services.AddScoped<IngressoService>();
+builder.Services.AddScoped<CheckInService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -690,185 +692,48 @@ app.MapGet("/api/reservas/{id}/ingresso", async (IngressoService service, int id
 // RF02 — CHECK-IN (3 endpoints)
 // ==========================================================
 
-// 3.1. Realizar check-in
-app.MapPost("/api/ingressos/{codigo}/checkin", async (IDbConnection db, string codigo) =>
+// 3.1. Realizar check-in via código na URL
+app.MapPost("/api/ingressos/{codigo}/checkin", async (CheckInService service, string codigo) =>
 {
-    if (codigo.Length != 8)
-        return Results.BadRequest(new { erro = "Código deve ter 8 caracteres." });
+    var (response, erro, statusCode) = await service.RealizarCheckInPorCodigoAsync(codigo);
 
-    var ingresso = await db.QuerySingleOrDefaultAsync<Ingresso>(
-        "SELECT Id, Status FROM Ingressos WHERE CodigoUnico = @Codigo",
-        new { Codigo = codigo });
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
-    if (ingresso is null)
-        return Results.NotFound(new { erro = "Ingresso não encontrado." });
-
-    if (ingresso.Status != "Confirmada")
-        return Results.Conflict(new { erro = $"Ingresso não está confirmado para check-in. Status atual: {ingresso.Status}" });
-
-    // Verificar se check-in já foi realizado
-    var checkinExistente = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM CheckIns WHERE IngressoId = @IngressoId",
-        new { IngressoId = ingresso.Id });
-
-    if (checkinExistente > 0)
-        return Results.Conflict(new { erro = "Check-in já realizado para este ingresso." });
-
-    // Registrar check-in
-    var insertSql = @"INSERT INTO CheckIns (IngressoId, DataCheckIn)
-                      OUTPUT INSERTED.Id, INSERTED.DataCheckIn
-                      VALUES (@IngressoId, GETDATE())";
-
-    var result = await db.QuerySingleAsync(insertSql, new { IngressoId = ingresso.Id });
-    int checkinId = (int)result.Id;
-    DateTime dataCheckIn = (DateTime)result.DataCheckIn;
-
-    // Atualizar status do ingresso para Utilizada
-    await db.ExecuteAsync(
-        "UPDATE Ingressos SET Status = 'Utilizada' WHERE Id = @Id",
-        new { Id = ingresso.Id });
-
-    var response = new CheckInResponse
-    {
-        Id = checkinId,
-        IngressoId = ingresso.Id,
-        CodigoUnico = codigo,
-        DataCheckIn = dataCheckIn,
-        Mensagem = "Check-in realizado com sucesso. Bem-vindo ao evento!"
-    };
-
-    return Results.Created($"/api/checkins/{checkinId}", response);
+    return Results.Created($"/api/checkins/{response.Id}", response);
 });
 
 // 3.2. Listar check-ins de um evento
-app.MapGet("/api/eventos/{eventoId}/checkins", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/eventos/{eventoId}/checkins", async (CheckInService service, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
+    var (response, erro, statusCode) = await service.ListarCheckInsAsync(eventoId);
 
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT ci.Id, ci.IngressoId, i.CodigoUnico, u.Nome AS NomeUsuario,
-               u.Cpf AS UsuarioCpf, ti.Nome AS TipoIngresso, ci.DataCheckIn
-        FROM CheckIns ci
-        INNER JOIN Ingressos i ON i.Id = ci.IngressoId
-        INNER JOIN Reservas r ON r.Id = i.ReservaId
-        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
-        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
-        WHERE r.EventoId = @EventoId
-        ORDER BY ci.DataCheckIn DESC";
-
-    var checkins = (await db.QueryAsync<CheckInItemResponse>(sql, new { EventoId = eventoId })).AsList();
-
-    var response = new CheckInListResponse
-    {
-        EventoId = eventoId,
-        NomeEvento = evento.Nome,
-        TotalCheckIns = checkins.Count,
-        CheckIns = checkins
-    };
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
     return Results.Ok(response);
 });
 
 // 3.3. Estatísticas de check-in do evento
-app.MapGet("/api/eventos/{eventoId}/checkins/stats", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/eventos/{eventoId}/checkins/stats", async (CheckInService service, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
+    var (response, erro, statusCode) = await service.ObterStatsAsync(eventoId);
 
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var stats = await db.QuerySingleAsync(@"
-        SELECT
-            ISNULL(SUM(CASE WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN 1 ELSE 0 END), 0) AS TotalIngressosVendidos,
-            ISNULL(COUNT(DISTINCT ci.Id), 0) AS TotalCheckIns,
-            ISNULL(SUM(CASE WHEN ig.Status = 'Confirmada' THEN 1 ELSE 0 END), 0) AS Pendentes
-        FROM Eventos e
-        LEFT JOIN TiposIngresso ti ON ti.EventoId = e.Id
-        LEFT JOIN Ingressos ig ON ig.TipoIngressoId = ti.Id
-        LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
-        WHERE e.Id = @EventoId",
-        new { EventoId = eventoId });
-
-    int totalVendidos = (int)stats.TotalIngressosVendidos;
-    int totalCheckIns = (int)stats.TotalCheckIns;
-    int pendentes = (int)stats.Pendentes;
-    decimal percentual = totalVendidos > 0
-        ? Math.Round((decimal)totalCheckIns / totalVendidos * 100, 2)
-        : 0;
-
-    var response = new CheckInStatsResponse
-    {
-        EventoId = eventoId,
-        NomeEvento = evento.Nome,
-        TotalIngressosVendidos = totalVendidos,
-        TotalCheckIns = totalCheckIns,
-        Pendentes = pendentes,
-        PercentualPresenca = percentual
-    };
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
     return Results.Ok(response);
 });
 
-// ==========================================================
-// NOVO ENDPOINT: Check-in via CodigoIngresso no corpo
-// ==========================================================
-
-app.MapPost("/api/checkin", async (IDbConnection db, [FromBody] CheckInRequest request) =>
+// 3.4. Check-in via CodigoIngresso no corpo
+app.MapPost("/api/checkin", async (CheckInService service, [FromBody] CheckInRequest request) =>
 {
-    if (string.IsNullOrWhiteSpace(request.CodigoIngresso))
-        return Results.BadRequest(new { erro = "Código do ingresso é obrigatório." });
+    var (response, erro, statusCode) = await service.RealizarCheckInPorRequestAsync(request);
 
-    // Validar se o ingresso existe
-    var ingresso = await db.QuerySingleOrDefaultAsync<Ingresso>(
-        "SELECT Id, Status FROM Ingressos WHERE CodigoUnico = @Codigo",
-        new { Codigo = request.CodigoIngresso });
+    if (response is null)
+        return Results.Json(new { erro }, statusCode: statusCode);
 
-    if (ingresso is null)
-        return Results.NotFound(new { erro = "Ingresso não encontrado." });
-
-    // Validar se o ingresso está Ativo (Confirmada)
-    if (ingresso.Status != "Confirmada")
-        return Results.BadRequest(new { erro = $"Ingresso já utilizado. Status atual: {ingresso.Status}" });
-
-    // Bloquear check-in duplicado
-    var checkinExistente = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM CheckIns WHERE IngressoId = @IngressoId",
-        new { IngressoId = ingresso.Id });
-
-    if (checkinExistente > 0)
-        return Results.BadRequest(new { erro = "Check-in já realizado para este ingresso." });
-
-    // Registrar DataHoraCheckin e obter dados inseridos
-    var insertSql = @"INSERT INTO CheckIns (IngressoId, DataCheckIn)
-                      OUTPUT INSERTED.Id, INSERTED.DataCheckIn
-                      VALUES (@IngressoId, GETDATE())";
-
-    var result = await db.QuerySingleAsync(insertSql, new { IngressoId = ingresso.Id });
-    int checkinId = (int)result.Id;
-    DateTime dataCheckIn = (DateTime)result.DataCheckIn;
-
-    // Alterar status do ingresso para Utilizada
-    await db.ExecuteAsync(
-        "UPDATE Ingressos SET Status = 'Utilizada' WHERE Id = @Id",
-        new { Id = ingresso.Id });
-
-    var response = new CheckInResponse
-    {
-        Id = checkinId,
-        IngressoId = ingresso.Id,
-        CodigoUnico = request.CodigoIngresso,
-        DataCheckIn = dataCheckIn,
-        Mensagem = "Check-in realizado com sucesso. Bem-vindo ao evento!"
-    };
-
-    return Results.Created($"/api/checkin/{checkinId}", response);
+    return Results.Created($"/api/checkin/{response.Id}", response);
 });
 
 // ==========================================================

@@ -46,7 +46,9 @@ public class IngressoRepository : IIngressoRepository
     }
 
     /// <summary>
-    /// Reservado para uso na Etapa 11b (consulta direta por código no contexto de admin/cancelamento).
+    /// Obtém um ingresso pelo código único.
+    /// Usado pelo CheckInService na Etapa 9 e também disponível para fluxos futuros,
+    /// como confirmação/cancelamento/admin nas próximas etapas.
     /// </summary>
     public async Task<Ingresso?> ObterPorCodigoAsync(string codigo,
         IDbTransaction? transaction = null)
@@ -152,5 +154,14 @@ public class IngressoRepository : IIngressoRepository
             transaction: transaction, commandTimeout: commandTimeout) > 0);
 
         return codigo;
+    }
+
+    public async Task AtualizarStatusAsync(int id, string status,
+        IDbTransaction? transaction = null)
+    {
+        await _db.ExecuteAsync(
+            "UPDATE Ingressos SET Status = @Status WHERE Id = @Id",
+            new { Id = id, Status = status },
+            transaction: transaction);
     }
 }
