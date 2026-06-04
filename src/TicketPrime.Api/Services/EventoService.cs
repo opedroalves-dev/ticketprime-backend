@@ -79,11 +79,3 @@ public class EventoService
         return await _eventoRepository.ObterTodosAsync();
     }
 }
-
-public class ResultadoCriacaoEvento
-{
-    public bool Sucesso { get; set; }
-    public string? Erro { get; set; }
-    public int Id { get; set; }
-    public Evento? Evento { get; set; }
-}

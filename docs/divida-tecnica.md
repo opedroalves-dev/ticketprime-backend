@@ -1,6 +1,6 @@
 # Registro de Dívida Técnica — TicketPrime
 
-**Última atualização:** 2026-05-28
+**Última atualização:** 2026-06-04
 
 ---
 
@@ -144,6 +144,99 @@ Adotar uma das seguintes estratégias:
 - [ ] Performance não degrada significativamente para cenário normal (1 requisição)
 - [ ] Risco de deadlock avaliado e mitigado
 - [ ] Estratégia de locking documentada no ADR
+
+---
+
+---
+
+## TD-004: DashboardService injeta `IDbConnection` diretamente
+
+| Campo | Valor |
+|-------|-------|
+| **ID** | TD-004 |
+| **Data de registro** | 2026-06-04 |
+| **Origem** | Etapa 12 — Limpeza Final e Auditoria Arquitetural |
+| **Severidade** | Baixa |
+| **Prioridade** | Baixa |
+| **Status** | 📝 Registrada |
+
+### Descrição
+
+O [`DashboardService`](src/TicketPrime.Api/Services/DashboardService.cs) foi criado na Etapa 12 para migrar os 7 endpoints admin que continham SQL inline no [`Program.cs`](src/TicketPrime.Api/Program.cs). Por simplicidade e para não introduzir 4 novos repositórios (que seriam apenas delegadores), o serviço injeta [`IDbConnection`](src/TicketPrime.Api/Program.cs:13) diretamente e executa as queries com Dapper.
+
+Isso viola o padrão estabelecido de que a camada de serviços deve depender de repositórios, e não de conexões de banco diretamente.
+
+### Risco associado
+
+- **Cenário:** Necessidade de mockar ou substituir a implementação de banco em testes de integração para o DashboardService.
+- **Efeito:** O DashboardService não pode ser testado unitariamente sem um banco real, pois não há repositórios para mock.
+- **Impacto:** Baixo — o DashboardService contém apenas queries de leitura (dashboard/reports), sem operações de escrita.
+
+### Decisão
+
+**Aceito temporariamente.** O DashboardService é uma abstração fina sobre queries SQL de leitura. Para testá-lo adequadamente, seria necessário:
+1. Extrair repositórios específicos de dashboard (ex: `IDashboardEventoRepository`, `IDashboardReservaRepository`)
+2. Modificar o DashboardService para depender desses repositórios
+3. Atualizar os testes existentes
+
+Isso não se justifica no escopo atual, dado que os testes de integração existentes cobrem os cenários de dashboard de forma adequada.
+
+### Fase sugerida para correção
+
+**Futura** — quando houver necessidade de expandir o DashboardService com novas funcionalidades ou quando testes unitários forem exigidos para esta camada.
+
+### Ação corretiva sugerida
+
+Criar repositórios de dashboard específicos e injetá-los no DashboardService, removendo a dependência direta de `IDbConnection`.
+
+### Critérios de aceite para correção futura
+
+- [ ] DashboardService injeta `IDashboardEventoRepository`, `IDashboardReservaRepository` em vez de `IDbConnection`
+- [ ] Testes unitários para DashboardService implementados com mocks dos repositórios
+- [ ] Nenhuma query Dapper executada diretamente no DashboardService
+
+---
+
+## TD-005: `IncrementoService` com métodos não utilizados em produção
+
+| Campo | Valor |
+|-------|-------|
+| **ID** | TD-005 |
+| **Data de registro** | 2026-06-04 |
+| **Origem** | Etapa 12 — Limpeza Final e Auditoria Arquitetural |
+| **Severidade** | Média |
+| **Prioridade** | Média |
+| **Status** | ✅ Corrigida |
+
+### Descrição
+
+O [`IncrementoService`](src/TicketPrime.Api/Services/IncrementoService.cs) continha 4 métodos que não eram utilizados por nenhum endpoint em produção, apenas por testes unitários:
+
+1. `ValidarCarrinhoParaConfirmacao(Carrinho carrinho)` — validação de expiração de carrinho
+2. `CarrinhoEstaExpirado(Carrinho carrinho)` — verificação de expiração
+3. `CalcularDashboardEvento(Evento, List<TipoIngresso>, List<Ingresso>, List<CheckIn>)` — cálculo de métricas de dashboard
+4. `CalcularDashboardLista(List<Evento>, List<TipoIngresso>, List<Ingresso>, List<CheckIn>)` — cálculo de métricas de lista de eventos
+
+### Decisão (Etapa 12)
+
+**Removidos na Etapa 12.** Os 4 métodos foram identificados como código morto e removidos, junto com seus 13 testes unitários correspondentes. Nenhuma funcionalidade de produção foi afetada.
+
+### Ação corretiva executada
+
+| Método | Arquivo | Ação |
+|--------|---------|------|
+| `ValidarCarrinhoParaConfirmacao` | [`IncrementoService.cs`](src/TicketPrime.Api/Services/IncrementoService.cs) | Removido |
+| `CarrinhoEstaExpirado` | [`IncrementoService.cs`](src/TicketPrime.Api/Services/IncrementoService.cs) | Removido |
+| `CalcularDashboardEvento` | [`IncrementoService.cs`](src/TicketPrime.Api/Services/IncrementoService.cs) | Removido |
+| `CalcularDashboardLista` | [`IncrementoService.cs`](src/TicketPrime.Api/Services/IncrementoService.cs) | Removido |
+| 13 testes | [`IncrementoServiceTests.cs`](tests/TicketPrime.Tests/IncrementoServiceTests.cs) | Removidos |
+
+### Impacto da correção
+
+- **Total de testes:** 103 → **90** (redução de 13 testes)
+- **Build:** ✅ Compila sem erros
+- **Testes:** ✅ 90/90 passando
+- **Nenhuma funcionalidade de produção afetada**
 
 ---
 

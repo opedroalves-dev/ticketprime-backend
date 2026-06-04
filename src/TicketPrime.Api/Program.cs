@@ -1,6 +1,4 @@
-using Dapper;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.SqlClient;
 using System.Data;
 using TicketPrime.Api.Authentication;
 using TicketPrime.Api.Middleware;
@@ -14,7 +12,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' não encontrada.");
 
 builder.Services.AddScoped<IDbConnection>(sp =>
-    new SqlConnection(connectionString));
+    new Microsoft.Data.SqlClient.SqlConnection(connectionString));
 
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<UsuarioService>();
@@ -35,6 +33,7 @@ builder.Services.AddScoped<CheckInService>();
 builder.Services.AddScoped<ReservaService>();
 builder.Services.AddScoped<ICarrinhoRepository, CarrinhoRepository>();
 builder.Services.AddScoped<CarrinhoService>();
+builder.Services.AddScoped<DashboardService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -77,345 +76,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Inicialização do banco de dados
-await InicializarBancoAsync(connectionString);
-
-static async Task InicializarBancoAsync(string connStr)
-{
-    // Primeiro conecta ao master para criar o banco se não existir
-    var masterBuilder = new SqlConnectionStringBuilder(connStr)
-    {
-        InitialCatalog = "master"
-    };
-
-    using var masterConn = new SqlConnection(masterBuilder.ConnectionString);
-    await masterConn.OpenAsync();
-
-    var existeDb = await masterConn.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM sys.databases WHERE name = 'TicketPrimeDb'");
-
-    if (existeDb == 0)
-    {
-        await masterConn.ExecuteAsync("CREATE DATABASE TicketPrimeDb");
-        Console.WriteLine("Banco TicketPrimeDb criado com sucesso.");
-    }
-    else
-    {
-        Console.WriteLine("Banco TicketPrimeDb já existe.");
-    }
-
-    // Agora conecta ao TicketPrimeDb para criar as tabelas
-    using var db = new SqlConnection(connStr);
-    await db.OpenAsync();
-
-    // Tabela Usuarios
-    await db.ExecuteAsync(@"
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Usuarios')
-        CREATE TABLE Usuarios (
-            Cpf         VARCHAR(11)     NOT NULL,
-            Nome        VARCHAR(100)    NOT NULL,
-            Email       VARCHAR(150)    NOT NULL,
-            CONSTRAINT PK_Usuarios PRIMARY KEY (Cpf)
-        )");
-
-    // Tabela Eventos
-    await db.ExecuteAsync(@"
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Eventos')
-        CREATE TABLE Eventos (
-            Id               INT IDENTITY(1,1)   NOT NULL,
-            Nome             VARCHAR(200)        NOT NULL,
-            CapacidadeTotal  INT                 NOT NULL,
-            DataEvento       DATETIME            NOT NULL,
-            PrecoPadrao      DECIMAL(10,2)       NOT NULL,
-            CONSTRAINT PK_Eventos PRIMARY KEY (Id)
-        )");
-
-    // Tabela Cupons
-    await db.ExecuteAsync(@"
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Cupons')
-        CREATE TABLE Cupons (
-            Codigo              VARCHAR(50)    NOT NULL,
-            PorcentagemDesconto DECIMAL(5,2)   NOT NULL,
-            ValorMinimoRegra    DECIMAL(10,2)  NOT NULL,
-            CONSTRAINT PK_Cupons PRIMARY KEY (Codigo)
-        )");
-
-    // Tabela Reservas
-    await db.ExecuteAsync(@"
-        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Reservas')
-        CREATE TABLE Reservas (
-            Id              INT IDENTITY(1,1)   NOT NULL,
-            UsuarioCpf      VARCHAR(11)         NOT NULL,
-            EventoId        INT                 NOT NULL,
-            CupomUtilizado  VARCHAR(50)         NULL,
-            ValorFinalPago  DECIMAL(10,2)       NOT NULL,
-            CONSTRAINT PK_Reservas PRIMARY KEY (Id),
-            CONSTRAINT FK_Reservas_Usuarios FOREIGN KEY (UsuarioCpf)
-                REFERENCES Usuarios(Cpf),
-            CONSTRAINT FK_Reservas_Eventos FOREIGN KEY (EventoId)
-                REFERENCES Eventos(Id),
-            CONSTRAINT FK_Reservas_Cupons FOREIGN KEY (CupomUtilizado)
-                REFERENCES Cupons(Codigo)
-        )");
-
-    // ========== TABELAS INCREMENTAIS (RF01-RF05) ==========
-
-    // TiposIngresso (RF03)
-    if (!await TabelaExiste(db, "TiposIngresso"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE TiposIngresso (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                EventoId        INT                 NOT NULL,
-                Nome            VARCHAR(100)        NOT NULL,
-                Preco           DECIMAL(10,2)       NOT NULL,
-                Capacidade      INT                 NOT NULL,
-                TaxaServico     DECIMAL(10,2)       NOT NULL DEFAULT 0.00,
-                DataInicioVenda DATETIME            NOT NULL,
-                DataFimVenda    DATETIME            NOT NULL,
-                Lote            VARCHAR(100)        NULL,
-                CONSTRAINT PK_TiposIngresso PRIMARY KEY (Id),
-                CONSTRAINT FK_TiposIngresso_Eventos FOREIGN KEY (EventoId)
-                    REFERENCES Eventos(Id)
-            )");
-        Console.WriteLine("Tabela TiposIngresso criada.");
-    }
-    else
-    {
-        // Adiciona coluna Lote se não existir (para novos endpoints /api/tipos-ingresso)
-        if (!await ColunaExiste(db, "TiposIngresso", "Lote"))
-        {
-            await db.ExecuteAsync("ALTER TABLE TiposIngresso ADD Lote VARCHAR(100) NULL");
-            Console.WriteLine("Coluna Lote adicionada à tabela TiposIngresso.");
-        }
-    }
-
-    // Ingressos (RF01)
-    if (!await TabelaExiste(db, "Ingressos"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE Ingressos (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                ReservaId       INT                 NOT NULL,
-                TipoIngressoId  INT                 NULL,
-                CodigoUnico     VARCHAR(8)          NOT NULL,
-                Status          VARCHAR(20)         NOT NULL DEFAULT 'Confirmada',
-                ValorBruto      DECIMAL(10,2)       NOT NULL,
-                ValorDesconto   DECIMAL(10,2)       NOT NULL DEFAULT 0.00,
-                TaxaServico     DECIMAL(10,2)       NOT NULL DEFAULT 0.00,
-                ValorFinal      DECIMAL(10,2)       NOT NULL,
-                DataCriacao     DATETIME            NOT NULL DEFAULT GETDATE(),
-                CONSTRAINT PK_Ingressos PRIMARY KEY (Id),
-                CONSTRAINT UQ_Ingressos_CodigoUnico UNIQUE (CodigoUnico),
-                CONSTRAINT FK_Ingressos_Reservas FOREIGN KEY (ReservaId)
-                    REFERENCES Reservas(Id),
-                CONSTRAINT FK_Ingressos_TiposIngresso FOREIGN KEY (TipoIngressoId)
-                    REFERENCES TiposIngresso(Id),
-                CONSTRAINT CK_Ingressos_Status CHECK (
-                    Status IN ('Confirmada', 'Utilizada', 'Cancelada')
-                ),
-                CONSTRAINT CK_Ingressos_CodigoUnico_Tamanho CHECK (
-                    LEN(CodigoUnico) = 8
-                )
-            )");
-        Console.WriteLine("Tabela Ingressos criada.");
-    }
-
-    // CheckIns (RF02)
-    if (!await TabelaExiste(db, "CheckIns"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE CheckIns (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                IngressoId      INT                 NOT NULL,
-                DataCheckIn     DATETIME            NOT NULL DEFAULT GETDATE(),
-                CONSTRAINT PK_CheckIns PRIMARY KEY (Id),
-                CONSTRAINT UQ_CheckIns_IngressoId UNIQUE (IngressoId),
-                CONSTRAINT FK_CheckIns_Ingressos FOREIGN KEY (IngressoId)
-                    REFERENCES Ingressos(Id)
-            )");
-        Console.WriteLine("Tabela CheckIns criada.");
-    }
-
-    // Carrinhos (RF04)
-    if (!await TabelaExiste(db, "Carrinhos"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE Carrinhos (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                UsuarioCpf      VARCHAR(11)         NOT NULL,
-                Status          VARCHAR(20)         NOT NULL DEFAULT 'Ativo',
-                DataCriacao     DATETIME            NOT NULL DEFAULT GETDATE(),
-                DataExpiracao   DATETIME            NOT NULL,
-                CONSTRAINT PK_Carrinhos PRIMARY KEY (Id),
-                CONSTRAINT FK_Carrinhos_Usuarios FOREIGN KEY (UsuarioCpf)
-                    REFERENCES Usuarios(Cpf),
-                CONSTRAINT CK_Carrinhos_Status CHECK (
-                    Status IN ('Ativo', 'Expirado', 'Confirmado')
-                )
-            )");
-        Console.WriteLine("Tabela Carrinhos criada.");
-    }
-
-    // CarrinhoItens (RF04)
-    if (!await TabelaExiste(db, "CarrinhoItens"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE CarrinhoItens (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                CarrinhoId      INT                 NOT NULL,
-                EventoId        INT                 NOT NULL,
-                TipoIngressoId  INT                 NULL,
-                Quantidade      INT                 NOT NULL DEFAULT 1,
-                PrecoUnitario   DECIMAL(10,2)       NOT NULL,
-                CONSTRAINT PK_CarrinhoItens PRIMARY KEY (Id),
-                CONSTRAINT FK_CarrinhoItens_Carrinhos FOREIGN KEY (CarrinhoId)
-                    REFERENCES Carrinhos(Id),
-                CONSTRAINT FK_CarrinhoItens_Eventos FOREIGN KEY (EventoId)
-                    REFERENCES Eventos(Id),
-                CONSTRAINT FK_CarrinhoItens_TiposIngresso FOREIGN KEY (TipoIngressoId)
-                    REFERENCES TiposIngresso(Id),
-                CONSTRAINT CK_CarrinhoItens_Quantidade CHECK (
-                    Quantidade > 0
-                )
-            )");
-        Console.WriteLine("Tabela CarrinhoItens criada.");
-    }
-
-    // HistoricoPrecos (RF05)
-    if (!await TabelaExiste(db, "HistoricoPrecos"))
-    {
-        await db.ExecuteAsync(@"
-            CREATE TABLE HistoricoPrecos (
-                Id              INT IDENTITY(1,1)   NOT NULL,
-                EventoId        INT                 NULL,
-                TipoIngressoId  INT                 NULL,
-                PrecoAnterior   DECIMAL(10,2)       NULL,
-                PrecoNovo       DECIMAL(10,2)       NOT NULL,
-                DataAlteracao   DATETIME            NOT NULL DEFAULT GETDATE(),
-                Motivo          VARCHAR(200)        NULL,
-                CONSTRAINT PK_HistoricoPrecos PRIMARY KEY (Id),
-                CONSTRAINT FK_HistoricoPrecos_Eventos FOREIGN KEY (EventoId)
-                    REFERENCES Eventos(Id),
-                CONSTRAINT FK_HistoricoPrecos_TiposIngresso FOREIGN KEY (TipoIngressoId)
-                    REFERENCES TiposIngresso(Id)
-            )");
-        Console.WriteLine("Tabela HistoricoPrecos criada.");
-    }
-
-    // ========== ÍNDICES ADICIONAIS ==========
-    if (!await IndiceExiste(db, "IX_Ingressos_ReservaId"))
-        await db.ExecuteAsync("CREATE INDEX IX_Ingressos_ReservaId ON Ingressos(ReservaId)");
-
-    if (!await IndiceExiste(db, "IX_Ingressos_Status"))
-        await db.ExecuteAsync("CREATE INDEX IX_Ingressos_Status ON Ingressos(Status)");
-
-    if (!await IndiceExiste(db, "IX_Carrinhos_UsuarioCpf_Status"))
-        await db.ExecuteAsync("CREATE INDEX IX_Carrinhos_UsuarioCpf_Status ON Carrinhos(UsuarioCpf, Status) WHERE Status = 'Ativo'");
-
-    if (!await IndiceExiste(db, "IX_HistoricoPrecos_EventoId"))
-        await db.ExecuteAsync("CREATE INDEX IX_HistoricoPrecos_EventoId ON HistoricoPrecos(EventoId, DataAlteracao DESC)");
-
-    if (!await IndiceExiste(db, "IX_HistoricoPrecos_TipoIngressoId"))
-        await db.ExecuteAsync("CREATE INDEX IX_HistoricoPrecos_TipoIngressoId ON HistoricoPrecos(TipoIngressoId, DataAlteracao DESC)");
-
-    // ========== VIEWS (A3: CREATE OR ALTER VIEW — operação atômica) ==========
-    await CriarOuRecriarView(db, @"
-        CREATE OR ALTER VIEW vw_DashboardEventos
-        AS
-        SELECT
-            e.Id                           AS EventoId,
-            e.Nome                         AS NomeEvento,
-            e.DataEvento,
-            e.CapacidadeTotal,
-            e.PrecoPadrao,
-            ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                THEN 1 ELSE 0
-            END), 0)                        AS TotalIngressosVendidos,
-            ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                THEN ig.ValorFinal ELSE 0
-            END), 0.00)                     AS ReceitaTotal,
-            CASE
-                WHEN e.CapacidadeTotal > 0
-                THEN ROUND(
-                    CAST(ISNULL(SUM(CASE
-                        WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                        THEN 1 ELSE 0
-                    END), 0) AS DECIMAL(10,2)) / e.CapacidadeTotal * 100, 2)
-                ELSE 0.00
-            END                             AS PercentualOcupacao,
-            ISNULL(COUNT(DISTINCT ci.Id), 0) AS TotalCheckIns,
-            ISNULL(SUM(CASE
-                WHEN ig.Status = 'Confirmada' THEN 1 ELSE 0
-            END), 0)                        AS PendentesCheckIn,
-            ISNULL(SUM(CASE
-                WHEN ig.Status = 'Cancelada' THEN 1 ELSE 0
-            END), 0)                        AS TotalCancelados
-        FROM Eventos e
-        LEFT JOIN TiposIngresso ti ON ti.EventoId = e.Id
-        LEFT JOIN Ingressos ig ON ig.TipoIngressoId = ti.Id
-        LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
-        GROUP BY e.Id, e.Nome, e.DataEvento, e.CapacidadeTotal, e.PrecoPadrao");
-
-    await CriarOuRecriarView(db, @"
-        CREATE OR ALTER VIEW vw_DashboardLotes
-        AS
-        SELECT
-            ti.Id                           AS TipoIngressoId,
-            ti.EventoId,
-            ti.Nome                         AS NomeLote,
-            ti.Preco                        AS PrecoAtual,
-            ti.Capacidade                   AS CapacidadeLote,
-            ti.TaxaServico,
-            ti.DataInicioVenda,
-            ti.DataFimVenda,
-            ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                THEN 1 ELSE 0
-            END), 0)                        AS IngressosVendidos,
-            ti.Capacidade - ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                THEN 1 ELSE 0
-            END), 0)                        AS CapacidadeRestante,
-            ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada')
-                THEN ig.ValorFinal ELSE 0
-            END), 0.00)                     AS ReceitaLote,
-            ISNULL(COUNT(DISTINCT ci.Id), 0) AS CheckInsRealizados
-        FROM TiposIngresso ti
-        LEFT JOIN Ingressos ig ON ig.TipoIngressoId = ti.Id
-        LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
-        GROUP BY ti.Id, ti.EventoId, ti.Nome, ti.Preco, ti.Capacidade,
-                 ti.TaxaServico, ti.DataInicioVenda, ti.DataFimVenda");
-
-    Console.WriteLine("Tabelas/views incrementais verificadas/criadas com sucesso.");
-}
-
-static async Task<bool> TabelaExiste(IDbConnection db, string nome)
-{
-    return await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM sys.tables WHERE name = @Nome", new { Nome = nome }) > 0;
-}
-
-static async Task<bool> IndiceExiste(IDbConnection db, string nome)
-{
-    return await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM sys.indexes WHERE name = @Nome", new { Nome = nome }) > 0;
-}
-
-static async Task<bool> ColunaExiste(IDbConnection db, string tabela, string coluna)
-{
-    return await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM sys.columns WHERE object_id = OBJECT_ID(@Tabela) AND name = @Coluna",
-        new { Tabela = tabela, Coluna = coluna }) > 0;
-}
-
-static async Task CriarOuRecriarView(IDbConnection db, string createSql)
-{
-    // A3: CREATE OR ALTER VIEW é atômico — não há mais DROP VIEW separado
-    await db.ExecuteAsync(createSql);
-}
+Console.WriteLine("ALERTA: Execute db/ticketprime.sql e db/ticketprime_incrementos.sql antes de usar a API.");
 
 // Health check (Item 7 / F4) — GET /health
 // Retorna 200 OK com status "Healthy" e timestamp ISO 8601.
@@ -462,20 +123,6 @@ app.MapPost("/api/reservas", async (ReservaService service, [FromBody] ReservaRe
 
 // ==========================================================
 // RF05 — TRANSPARÊNCIA DE PREÇO: Simulador de Preço
-// ==========================================================
-// Endpoint de simulação que Exibe PrecoBase, TaxaServico,
-// ValorDesconto e ValorFinal sem criar reserva.
-//
-// Regras:
-//   - PrecoBase   = PrecoPadrao do Evento
-//   - TaxaServico = PrecoBase × 0,10 (10% sobre o PrecoBase)
-//   - ValorDesconto = PrecoBase × (PorcentagemDesconto / 100)
-//                     Aplicado somente se cupom existir E
-//                     PrecoBase >= ValorMinimoRegra do cupom
-//   - ValorFinal  = PrecoBase + TaxaServico - ValorDesconto
-//
-// NÃO insere reserva (apenas simulação).
-// NÃO altera a regra oficial de cupom.
 // ==========================================================
 
 app.MapPost("/api/reservas/simular-preco", async (ReservaService service, [FromBody] SimulacaoPrecoRequest request) =>
@@ -774,237 +421,68 @@ app.MapGet("/api/lotes/{loteId}/historico-precos",
 });
 
 // ==========================================================
-// RF06 — DASHBOARD/ADMIN (4 endpoints)
+// RF06 — DASHBOARD/ADMIN (7 endpoints delegados ao DashboardService)
 // ==========================================================
 
 // 7.1. Listar eventos com métricas
-app.MapGet("/api/admin/eventos", async (IDbConnection db) =>
+app.MapGet("/api/admin/eventos", async (DashboardService dashboard) =>
 {
-    var eventos = await db.QueryAsync<DashboardEventoListaResponse>(
-        "SELECT * FROM vw_DashboardEventos ORDER BY DataEvento");
-
+    var eventos = await dashboard.ListarEventosAsync();
     return Results.Ok(eventos);
 }).RequireAuthorization();
 
 // 7.2. Dashboard detalhado de um evento
-app.MapGet("/api/admin/eventos/{eventoId}", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/admin/eventos/{eventoId}", async (DashboardService dashboard, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var eventoDashboard = await db.QuerySingleOrDefaultAsync<DashboardEventoDetalhadoResponse>(
-        "SELECT * FROM vw_DashboardEventos WHERE EventoId = @EventoId",
-        new { EventoId = eventoId });
-
+    var eventoDashboard = await dashboard.ObterDashboardEventoAsync(eventoId);
     if (eventoDashboard is null)
-    {
-        // Se não há dados na view (sem ingressos via TiposIngresso), buscar dados básicos
-        var eventoBase = await db.QuerySingleAsync<Evento>(
-            "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
-            new { Id = eventoId });
-
-        eventoDashboard = new DashboardEventoDetalhadoResponse
-        {
-            EventoId = eventoBase.Id,
-            NomeEvento = eventoBase.Nome,
-            DataEvento = eventoBase.DataEvento,
-            CapacidadeTotal = eventoBase.CapacidadeTotal,
-            PrecoPadrao = eventoBase.PrecoPadrao,
-            TotalIngressosVendidos = 0,
-            ReceitaTotal = 0,
-            PercentualOcupacao = 0,
-            TotalCheckIns = 0,
-            PendentesCheckIn = 0,
-            TotalCancelados = 0
-        };
-    }
-
-    // Buscar métricas por lote
-    var lotes = await db.QueryAsync<DashboardLoteResponse>(
-        "SELECT * FROM vw_DashboardLotes WHERE EventoId = @EventoId",
-        new { EventoId = eventoId });
-
-    eventoDashboard.Lotes = lotes.AsList();
-
+        return Results.NotFound(new { erro = "Evento não encontrado." });
     return Results.Ok(eventoDashboard);
 }).RequireAuthorization();
 
 // 7.3. Métricas por lote do evento
-app.MapGet("/api/admin/eventos/{eventoId}/lotes", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/admin/eventos/{eventoId}/lotes", async (DashboardService dashboard, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
+    var lotes = await dashboard.ListarLotesEventoAsync(eventoId);
+    if (lotes is null)
         return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var lotes = await db.QueryAsync<DashboardLoteResponse>(
-        "SELECT * FROM vw_DashboardLotes WHERE EventoId = @EventoId",
-        new { EventoId = eventoId });
-
     return Results.Ok(lotes);
 }).RequireAuthorization();
 
-// 7.4. Listar todas as reservas (admin) — Item 5.2: SQL fixo com parâmetros opcionais
-app.MapGet("/api/admin/reservas", async (IDbConnection db,
+// 7.4. Listar todas as reservas (admin)
+app.MapGet("/api/admin/reservas", async (DashboardService dashboard,
     [FromQuery] int? eventoId,
     [FromQuery] string? status,
     [FromQuery] string? cpf) =>
 {
-    var parameters = new { EventoId = eventoId, Status = status, Cpf = cpf };
-
-    var sql = @"
-        SELECT
-            r.Id                     AS ReservaId,
-            r.UsuarioCpf,
-            u.Nome                   AS NomeUsuario,
-            r.EventoId,
-            e.Nome                   AS NomeEvento,
-            e.DataEvento,
-            i.Id                     AS IngressoId,
-            i.CodigoUnico,
-            i.Status                 AS StatusIngresso,
-            ti.Nome                  AS TipoIngresso,
-            i.ValorBruto,
-            i.ValorDesconto,
-            i.TaxaServico,
-            i.ValorFinal,
-            r.CupomUtilizado,
-            CASE WHEN ci.Id IS NOT NULL THEN 1 ELSE 0 END AS CheckInRealizado
-        FROM Reservas r
-        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
-        INNER JOIN Eventos e ON e.Id = r.EventoId
-        LEFT JOIN Ingressos i ON i.ReservaId = r.Id
-        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
-        LEFT JOIN CheckIns ci ON ci.IngressoId = i.Id
-        WHERE (@EventoId IS NULL OR r.EventoId = @EventoId)
-          AND (@Status IS NULL OR i.Status = @Status)
-          AND (@Cpf IS NULL OR r.UsuarioCpf = @Cpf)
-        ORDER BY r.Id DESC";
-
-    var reservas = await db.QueryAsync<AdminReservaResponse>(sql, parameters);
-
+    var reservas = await dashboard.ListarReservasAdminAsync(eventoId, status, cpf);
     return Results.Ok(reservas);
 }).RequireAuthorization();
 
-// ==========================================================
-// ENDPOINTS ADMINISTRATIVOS DE CONSULTA
-// ==========================================================
-
 // 8.1. Resumo do evento
-app.MapGet("/api/admin/eventos/{eventoId}/resumo", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/admin/eventos/{eventoId}/resumo", async (DashboardService dashboard, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
+    var resumo = await dashboard.ObterResumoEventoAsync(eventoId);
+    if (resumo is null)
         return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT
-            e.Id              AS EventoId,
-            e.Nome            AS NomeEvento,
-            e.DataEvento,
-            e.CapacidadeTotal,
-            ISNULL(COUNT(DISTINCT r.Id), 0)                                                AS TotalReservas,
-            e.CapacidadeTotal - ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN 1 ELSE 0
-            END), 0)                                                                        AS IngressosDisponiveis,
-            ISNULL(SUM(CASE
-                WHEN ig.Status IN ('Confirmada', 'Utilizada') THEN ig.ValorFinal ELSE 0
-            END), 0.00)                                                                     AS ReceitaTotal,
-            ISNULL(COUNT(DISTINCT ci.Id), 0)                                                AS TotalCheckIns
-        FROM Eventos e
-        LEFT JOIN Reservas r ON r.EventoId = e.Id
-        LEFT JOIN Ingressos ig ON ig.ReservaId = r.Id
-        LEFT JOIN CheckIns ci ON ci.IngressoId = ig.Id
-        WHERE e.Id = @EventoId
-        GROUP BY e.Id, e.Nome, e.DataEvento, e.CapacidadeTotal";
-
-    var resumo = await db.QuerySingleAsync<EventoResumoResponse>(sql, new { EventoId = eventoId });
-
     return Results.Ok(resumo);
 }).RequireAuthorization();
 
 // 8.2. Listar check-ins de um evento (admin)
-app.MapGet("/api/admin/eventos/{eventoId}/checkins", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/admin/eventos/{eventoId}/checkins", async (DashboardService dashboard, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
+    var response = await dashboard.ListarCheckInsAdminAsync(eventoId);
+    if (response is null)
         return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT ci.Id, ci.IngressoId, i.CodigoUnico, u.Nome AS NomeUsuario,
-               u.Cpf AS UsuarioCpf, ti.Nome AS TipoIngresso, ci.DataCheckIn
-        FROM CheckIns ci
-        INNER JOIN Ingressos i ON i.Id = ci.IngressoId
-        INNER JOIN Reservas r ON r.Id = i.ReservaId
-        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
-        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
-        WHERE r.EventoId = @EventoId
-        ORDER BY ci.DataCheckIn DESC";
-
-    var checkins = (await db.QueryAsync<CheckInItemResponse>(sql, new { EventoId = eventoId })).AsList();
-
-    var response = new CheckInListResponse
-    {
-        EventoId = eventoId,
-        NomeEvento = evento.Nome,
-        TotalCheckIns = checkins.Count,
-        CheckIns = checkins
-    };
-
     return Results.Ok(response);
 }).RequireAuthorization();
 
 // 8.3. Listar reservas de um evento (admin)
-app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (IDbConnection db, int eventoId) =>
+app.MapGet("/api/admin/eventos/{eventoId}/reservas", async (DashboardService dashboard, int eventoId) =>
 {
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id FROM Eventos WHERE Id = @Id",
-        new { Id = eventoId });
-
-    if (evento is null)
+    var reservas = await dashboard.ListarReservasEventoAsync(eventoId);
+    if (reservas is null)
         return Results.NotFound(new { erro = "Evento não encontrado." });
-
-    var sql = @"
-        SELECT
-            r.Id                     AS ReservaId,
-            r.UsuarioCpf,
-            u.Nome                   AS NomeUsuario,
-            r.EventoId,
-            e.Nome                   AS NomeEvento,
-            e.DataEvento,
-            i.Id                     AS IngressoId,
-            i.CodigoUnico,
-            i.Status                 AS StatusIngresso,
-            ti.Nome                  AS TipoIngresso,
-            i.ValorBruto,
-            i.ValorDesconto,
-            i.TaxaServico,
-            i.ValorFinal,
-            r.CupomUtilizado,
-            CASE WHEN ci.Id IS NOT NULL THEN 1 ELSE 0 END AS CheckInRealizado
-        FROM Reservas r
-        INNER JOIN Usuarios u ON u.Cpf = r.UsuarioCpf
-        INNER JOIN Eventos e ON e.Id = r.EventoId
-        LEFT JOIN Ingressos i ON i.ReservaId = r.Id
-        LEFT JOIN TiposIngresso ti ON ti.Id = i.TipoIngressoId
-        LEFT JOIN CheckIns ci ON ci.IngressoId = i.Id
-        WHERE r.EventoId = @EventoId
-        ORDER BY r.Id DESC";
-
-    var reservas = await db.QueryAsync<AdminReservaResponse>(sql, new { EventoId = eventoId });
-
     return Results.Ok(reservas);
 }).RequireAuthorization();
 

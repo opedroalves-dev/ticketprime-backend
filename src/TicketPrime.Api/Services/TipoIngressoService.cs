@@ -439,16 +439,6 @@ public class TipoIngressoService
 //  Resultado — classes de retorno com suporte a StatusCode
 // =====================================================================
 
-// 1. Criar lote
-public class ResultadoCriacaoLote
-{
-    public bool Sucesso { get; set; }
-    public string? Erro { get; set; }
-    public int? StatusCode { get; set; }
-    public int Id { get; set; }
-    public LoteResponse? Lote { get; set; }
-}
-
 // 2. Listar lotes
 public class ResultadoListagemLotes
 {
@@ -482,16 +472,6 @@ public class ResultadoRemoverLote
     public bool Sucesso { get; set; }
     public string? Erro { get; set; }
     public int? StatusCode { get; set; }
-}
-
-// 6. Criar tipo ingresso
-public class ResultadoCriacaoTipoIngresso
-{
-    public bool Sucesso { get; set; }
-    public string? Erro { get; set; }
-    public int? StatusCode { get; set; }
-    public int Id { get; set; }
-    public TipoIngressoResponse? TipoIngresso { get; set; }
 }
 
 // 7. Listar tipos ingresso

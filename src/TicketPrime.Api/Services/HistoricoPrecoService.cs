@@ -1,4 +1,3 @@
-using Dapper;
 using TicketPrime.Api.Models;
 using TicketPrime.Api.Repositories;
 
@@ -40,7 +39,7 @@ public class HistoricoPrecoService
         {
             EventoId = eventoId,
             NomeEvento = evento.Nome,
-            Historico = historico.AsList()
+            Historico = historico.ToList()
         };
     }
 
@@ -70,7 +69,7 @@ public class HistoricoPrecoService
             NomeLote = lote.Nome,
             EventoId = lote.EventoId,
             NomeEvento = evento?.Nome ?? "",
-            Historico = historico.AsList()
+            Historico = historico.ToList()
         };
     }
 }
