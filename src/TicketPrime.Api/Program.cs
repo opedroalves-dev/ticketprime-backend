@@ -33,6 +33,8 @@ builder.Services.AddScoped<TipoIngressoService>();
 builder.Services.AddScoped<IngressoService>();
 builder.Services.AddScoped<CheckInService>();
 builder.Services.AddScoped<ReservaService>();
+builder.Services.AddScoped<ICarrinhoRepository, CarrinhoRepository>();
+builder.Services.AddScoped<CarrinhoService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -691,259 +693,50 @@ app.MapGet("/api/eventos/{eventoId}/tipos-ingresso", async (TipoIngressoService 
 });
 
 // ==========================================================
-// RF04 — CARRINHO (4 endpoints)
+// RF04 — CARRINHO (4 endpoints CRUD — Etapa 11a)
 // ==========================================================
 
-// Função auxiliar para gerar carrinho response
-static async Task<CarrinhoResponse> ConstruirCarrinhoResponseAsync(IDbConnection db, int carrinhoId)
-{
-    var carrinho = await db.QuerySingleAsync<Carrinho>(
-        "SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao FROM Carrinhos WHERE Id = @Id",
-        new { Id = carrinhoId });
-
-    var itens = await db.QueryAsync<CarrinhoItemResponse>(@"
-        SELECT ci.Id, ci.EventoId, e.Nome AS NomeEvento, ci.TipoIngressoId,
-               ti.Nome AS NomeLote, ci.Quantidade, ci.PrecoUnitario,
-               (ci.Quantidade * ci.PrecoUnitario) AS Subtotal
-        FROM CarrinhoItens ci
-        INNER JOIN Eventos e ON e.Id = ci.EventoId
-        LEFT JOIN TiposIngresso ti ON ti.Id = ci.TipoIngressoId
-        WHERE ci.CarrinhoId = @CarrinhoId",
-        new { CarrinhoId = carrinhoId });
-
-    var itensList = itens.AsList();
-    var total = itensList.Sum(i => i.Subtotal);
-
-    var minutosRestantes = carrinho.Status == "Ativo"
-        ? Math.Max(0, (int)(carrinho.DataExpiracao - DateTime.Now).TotalMinutes)
-        : 0;
-
-    return new CarrinhoResponse
-    {
-        CarrinhoId = carrinho.Id,
-        UsuarioCpf = carrinho.UsuarioCpf,
-        Status = carrinho.Status,
-        DataCriacao = carrinho.DataCriacao,
-        DataExpiracao = carrinho.DataExpiracao,
-        MinutosRestantes = minutosRestantes,
-        Itens = itensList,
-        Total = total
-    };
-}
-
 // 5.1. Criar carrinho vazio
-app.MapPost("/api/carrinho", async (IDbConnection db, [FromBody] CriarCarrinhoRequest request) =>
+app.MapPost("/api/carrinho", async (CarrinhoService service, [FromBody] CriarCarrinhoRequest request) =>
 {
-    if (string.IsNullOrWhiteSpace(request.UsuarioCpf))
-        return Results.BadRequest(new { erro = "CPF do usuário é obrigatório." });
-
-    if (request.UsuarioCpf.Length != 11 || !request.UsuarioCpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
-
-    var usuario = await db.QuerySingleOrDefaultAsync<Usuario>(
-        "SELECT Cpf FROM Usuarios WHERE Cpf = @Cpf",
-        new { Cpf = request.UsuarioCpf });
-
-    if (usuario is null)
-        return Results.BadRequest(new { erro = "Usuário não encontrado para o CPF informado." });
-
-    // Verificar carrinho ativo existente
-    var carrinhoAtivo = await db.QuerySingleOrDefaultAsync<Carrinho>(@"
-        SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao
-        FROM Carrinhos
-        WHERE UsuarioCpf = @UsuarioCpf AND Status = 'Ativo'",
-        new { UsuarioCpf = request.UsuarioCpf });
-
-    if (carrinhoAtivo is not null)
-    {
-        // Se expirou, marcar como expirado e permitir criar novo
-        if (carrinhoAtivo.DataExpiracao <= DateTime.Now)
-        {
-            await db.ExecuteAsync(
-                "UPDATE Carrinhos SET Status = 'Expirado' WHERE Id = @Id",
-                new { Id = carrinhoAtivo.Id });
-        }
-        else
-        {
-            return Results.BadRequest(new { erro = "Já existe um carrinho ativo para este CPF." });
-        }
-    }
-
-    // Criar novo carrinho com validade de 15 minutos
-    var carrinhoId = await db.QuerySingleAsync<int>(@"
-        INSERT INTO Carrinhos (UsuarioCpf, Status, DataCriacao, DataExpiracao)
-        OUTPUT INSERTED.Id
-        VALUES (@UsuarioCpf, 'Ativo', GETDATE(), DATEADD(MINUTE, 15, GETDATE()))",
-        new { UsuarioCpf = request.UsuarioCpf });
-
-    var response = await ConstruirCarrinhoResponseAsync(db, carrinhoId);
-
-    return Results.Created($"/api/carrinho/{carrinhoId}", response);
+    var (response, erro) = await service.CriarAsync(request);
+    return erro is not null
+        ? Results.BadRequest(new { erro })
+        : Results.Created($"/api/carrinho/{response!.CarrinhoId}", response);
 });
 
 // 5.2. Adicionar itens ao carrinho
-app.MapPost("/api/carrinho/{id}/itens", async (IDbConnection db, int id, [FromBody] AdicionarItensRequest request) =>
+app.MapPost("/api/carrinho/{id}/itens", async (CarrinhoService service, int id, [FromBody] AdicionarItensRequest request) =>
 {
-    var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(
-        "SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao FROM Carrinhos WHERE Id = @Id",
-        new { Id = id });
-
-    if (carrinho is null)
-        return Results.NotFound(new { erro = "Carrinho não encontrado." });
-
-    if (carrinho.Status != "Ativo")
-        return Results.BadRequest(new { erro = "Carrinho não está ativo." });
-
-    if (carrinho.DataExpiracao <= DateTime.Now)
-    {
-        await db.ExecuteAsync(
-            "UPDATE Carrinhos SET Status = 'Expirado' WHERE Id = @Id",
-            new { Id = carrinho.Id });
-        return Results.BadRequest(new { erro = "Carrinho expirado. Crie um novo carrinho." });
-    }
-
-    if (request.Itens is null || request.Itens.Count == 0)
-        return Results.BadRequest(new { erro = "Carrinho deve conter ao menos um item." });
-
-    for (int i = 0; i < request.Itens.Count; i++)
-    {
-        var item = request.Itens[i];
-
-        if (item.EventoId <= 0)
-            return Results.BadRequest(new { erro = "EventoId é obrigatório para cada item." });
-
-        var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-            "SELECT Id, Nome, PrecoPadrao FROM Eventos WHERE Id = @Id",
-            new { Id = item.EventoId });
-
-        if (evento is null)
-            return Results.BadRequest(new { erro = "Evento não encontrado para o Id informado." });
-
-        if (item.Quantidade <= 0)
-            return Results.BadRequest(new { erro = "Quantidade deve ser maior que zero." });
-
-        decimal precoUnitario = evento.PrecoPadrao;
-
-        if (item.TipoIngressoId.HasValue)
-        {
-            var tipoIngresso = await db.QuerySingleOrDefaultAsync<TipoIngresso>(
-                "SELECT Id, EventoId, Nome, Preco, Capacidade FROM TiposIngresso WHERE Id = @Id",
-                new { Id = item.TipoIngressoId.Value });
-
-            if (tipoIngresso is null)
-                return Results.BadRequest(new { erro = "Tipo de ingresso não encontrado." });
-
-            if (tipoIngresso.EventoId != item.EventoId)
-                return Results.BadRequest(new { erro = "Tipo de ingresso não pertence ao evento informado." });
-
-            // Verificar disponibilidade do lote
-            var vendidos = await db.ExecuteScalarAsync<int>(
-                "SELECT COUNT(1) FROM Ingressos WHERE TipoIngressoId = @TipoIngressoId AND Status IN ('Confirmada', 'Utilizada')",
-                new { TipoIngressoId = item.TipoIngressoId.Value });
-
-            var reservadosCarrinho = await db.ExecuteScalarAsync<int>(@"
-                SELECT ISNULL(SUM(ci.Quantidade), 0)
-                FROM CarrinhoItens ci
-                INNER JOIN Carrinhos c ON c.Id = ci.CarrinhoId
-                WHERE ci.TipoIngressoId = @TipoIngressoId AND c.Status = 'Ativo' AND c.Id != @CarrinhoId",
-                new { TipoIngressoId = item.TipoIngressoId.Value, CarrinhoId = carrinho.Id });
-
-            if (vendidos + reservadosCarrinho + item.Quantidade > tipoIngresso.Capacidade)
-                return Results.BadRequest(new { erro = "Capacidade insuficiente no lote informado." });
-
-            precoUnitario = tipoIngresso.Preco;
-        }
-
-        // Verificar limite de 2 reservas por CPF por evento (R1)
-        var reservasCpfEvento = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM Reservas WHERE UsuarioCpf = @UsuarioCpf AND EventoId = @EventoId",
-            new { UsuarioCpf = carrinho.UsuarioCpf, EventoId = item.EventoId });
-
-        if (reservasCpfEvento >= 2)
-            return Results.BadRequest(new { erro = $"CPF já possui o limite máximo de 2 reservas para o evento {evento.Id}." });
-
-        // Adicionar item ao carrinho
-        await db.ExecuteAsync(@"
-            INSERT INTO CarrinhoItens (CarrinhoId, EventoId, TipoIngressoId, Quantidade, PrecoUnitario)
-            VALUES (@CarrinhoId, @EventoId, @TipoIngressoId, @Quantidade, @PrecoUnitario)",
-            new
-            {
-                CarrinhoId = carrinho.Id,
-                EventoId = item.EventoId,
-                TipoIngressoId = item.TipoIngressoId,
-                Quantidade = item.Quantidade,
-                PrecoUnitario = precoUnitario
-            });
-    }
-
-    var response = await ConstruirCarrinhoResponseAsync(db, carrinho.Id);
-
+    var (response, erro, statusCode) = await service.AdicionarItensAsync(id, request);
+    if (erro is not null)
+        return Results.Json(new { erro }, statusCode: statusCode);
     return Results.Ok(response);
 });
 
 // 5.3. Visualizar carrinho ativo
-app.MapGet("/api/carrinho/{cpf}", async (IDbConnection db, string cpf) =>
+app.MapGet("/api/carrinho/{cpf}", async (CarrinhoService service, string cpf) =>
 {
-    if (cpf.Length != 11 || !cpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
-
-    var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(@"
-        SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao
-        FROM Carrinhos
-        WHERE UsuarioCpf = @Cpf AND Status IN ('Ativo', 'Expirado')
-        ORDER BY Id DESC",
-        new { Cpf = cpf });
-
-    if (carrinho is null)
-        return Results.NotFound(new { erro = "Nenhum carrinho ativo encontrado para este CPF." });
-
-    // Se expirou, atualizar status
-    if (carrinho.Status == "Ativo" && carrinho.DataExpiracao <= DateTime.Now)
-    {
-        await db.ExecuteAsync(
-            "UPDATE Carrinhos SET Status = 'Expirado' WHERE Id = @Id",
-            new { Id = carrinho.Id });
-        carrinho.Status = "Expirado";
-    }
-
-    var response = await ConstruirCarrinhoResponseAsync(db, carrinho.Id);
-
-    if (carrinho.Status == "Expirado")
-    {
-        response.Mensagem = "Carrinho expirado. Crie um novo carrinho para continuar.";
-        response.MinutosRestantes = 0;
-    }
-
+    var (response, erro) = await service.ObterAtivoAsync(cpf);
+    if (erro is not null)
+        return Results.Json(new { erro }, statusCode: erro switch
+        {
+            string e when e.Contains("dígitos") => 400,
+            _ => 404
+        });
     return Results.Ok(response);
 });
 
-// 5.3. Limpar carrinho
-app.MapDelete("/api/carrinho/{cpf}", async (IDbConnection db, string cpf) =>
+// 5.4. Limpar carrinho
+app.MapDelete("/api/carrinho/{cpf}", async (CarrinhoService service, string cpf) =>
 {
-    if (cpf.Length != 11 || !cpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
-
-    var carrinho = await db.QuerySingleOrDefaultAsync<Carrinho>(@"
-        SELECT Id, UsuarioCpf, Status, DataCriacao, DataExpiracao
-        FROM Carrinhos
-        WHERE UsuarioCpf = @Cpf AND Status = 'Ativo'",
-        new { Cpf = cpf });
-
-    if (carrinho is null)
-        return Results.NotFound(new { erro = "Nenhum carrinho ativo encontrado para este CPF." });
-
-    if (carrinho.DataExpiracao <= DateTime.Now)
-    {
-        await db.ExecuteAsync(
-            "UPDATE Carrinhos SET Status = 'Expirado' WHERE Id = @Id",
-            new { Id = carrinho.Id });
-        return Results.BadRequest(new { erro = "Carrinho já expirou." });
-    }
-
-    // Remover itens e marcar carrinho como expirado
-    await db.ExecuteAsync("DELETE FROM CarrinhoItens WHERE CarrinhoId = @Id", new { Id = carrinho.Id });
-    await db.ExecuteAsync("UPDATE Carrinhos SET Status = 'Expirado' WHERE Id = @Id", new { Id = carrinho.Id });
-
+    var (sucesso, erro) = await service.CancelarAsync(cpf);
+    if (!sucesso)
+        return Results.Json(new { erro }, statusCode: erro switch
+        {
+            string e when e.Contains("obrigatório") || e.Contains("dígitos") => 400,
+            _ => 404
+        });
     return Results.NoContent();
 });
 
