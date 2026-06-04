@@ -32,6 +32,7 @@ builder.Services.AddScoped<ICheckInRepository, CheckInRepository>();
 builder.Services.AddScoped<TipoIngressoService>();
 builder.Services.AddScoped<IngressoService>();
 builder.Services.AddScoped<CheckInService>();
+builder.Services.AddScoped<ReservaService>();
 
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -449,93 +450,12 @@ app.MapPost("/api/eventos", async (EventoService service, [FromBody] EventoReque
         : Results.BadRequest(new { erro = resultado.Erro });
 });
 
-app.MapPost("/api/reservas", async (IDbConnection db, [FromBody] ReservaRequest request) =>
+app.MapPost("/api/reservas", async (ReservaService service, [FromBody] ReservaRequest request) =>
 {
-    // Validações de entrada
-    if (string.IsNullOrWhiteSpace(request.UsuarioCpf))
-        return Results.BadRequest(new { erro = "CPF do usuário é obrigatório." });
-
-    if (request.UsuarioCpf.Length != 11 || !request.UsuarioCpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
-
-    if (request.EventoId <= 0)
-        return Results.BadRequest(new { erro = "EventoId deve ser maior que zero." });
-
-    // R1: Validar se UsuarioCpf existe
-    var usuarioExiste = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Usuarios WHERE Cpf = @Cpf",
-        new { Cpf = request.UsuarioCpf });
-
-    if (usuarioExiste == 0)
-        return Results.BadRequest(new { erro = "Usuário não encontrado para o CPF informado." });
-
-    // R1: Validar se EventoId existe e obter dados do evento
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
-        new { Id = request.EventoId });
-
-    if (evento is null)
-        return Results.BadRequest(new { erro = "Evento não encontrado para o Id informado." });
-
-    // R2: Mesmo CPF não pode ter mais de 2 reservas para o mesmo EventoId
-    var reservasCpfEvento = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Reservas WHERE UsuarioCpf = @UsuarioCpf AND EventoId = @EventoId",
-        new { UsuarioCpf = request.UsuarioCpf, EventoId = request.EventoId });
-
-    if (reservasCpfEvento >= 2)
-        return Results.BadRequest(new { erro = "CPF já possui o limite máximo de 2 reservas para este evento." });
-
-    // R3: Verificar capacidade total do evento
-    var totalReservasEvento = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Reservas WHERE EventoId = @EventoId",
-        new { EventoId = request.EventoId });
-
-    if (totalReservasEvento >= evento.CapacidadeTotal)
-        return Results.BadRequest(new { erro = "Evento lotado. Não há vagas disponíveis." });
-
-    // R4: Processar cupom de desconto, se informado
-    decimal valorFinalPago = evento.PrecoPadrao;
-
-    if (!string.IsNullOrWhiteSpace(request.CupomUtilizado))
-    {
-        var cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
-            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
-            new { Codigo = request.CupomUtilizado });
-
-        if (cupom is null)
-            return Results.BadRequest(new { erro = "Cupom não encontrado." });
-
-        // Aplica desconto apenas se PrecoPadrao >= ValorMinimoRegra
-        if (evento.PrecoPadrao >= cupom.ValorMinimoRegra)
-        {
-            valorFinalPago = evento.PrecoPadrao - (evento.PrecoPadrao * cupom.PorcentagemDesconto / 100m);
-        }
-    }
-
-    // Inserir a reserva
-    var sql = @"INSERT INTO Reservas (UsuarioCpf, EventoId, CupomUtilizado, ValorFinalPago)
-                OUTPUT INSERTED.Id
-                VALUES (@UsuarioCpf, @EventoId, @CupomUtilizado, @ValorFinalPago)";
-
-    var reservaId = await db.QuerySingleAsync<int>(sql, new
-    {
-        UsuarioCpf = request.UsuarioCpf,
-        EventoId = request.EventoId,
-        CupomUtilizado = string.IsNullOrWhiteSpace(request.CupomUtilizado) ? null : request.CupomUtilizado,
-        ValorFinalPago = valorFinalPago
-    });
-
-    var reservaResponse = new ReservaResponse
-    {
-        Id = reservaId,
-        UsuarioCpf = request.UsuarioCpf,
-        EventoId = request.EventoId,
-        NomeEvento = evento.Nome,
-        CupomUtilizado = string.IsNullOrWhiteSpace(request.CupomUtilizado) ? null : request.CupomUtilizado,
-        ValorFinalPago = valorFinalPago
-    };
-
-    return Results.Created($"/api/reservas/{reservaId}", reservaResponse);
+    var (reserva, erro) = await service.CriarReservaAsync(request);
+    return erro is not null
+        ? Results.BadRequest(new { erro })
+        : Results.Created($"/api/reservas/{reserva!.Id}", reserva);
 });
 
 // ==========================================================
@@ -556,63 +476,12 @@ app.MapPost("/api/reservas", async (IDbConnection db, [FromBody] ReservaRequest 
 // NÃO altera a regra oficial de cupom.
 // ==========================================================
 
-app.MapPost("/api/reservas/simular-preco", async (IDbConnection db, [FromBody] SimulacaoPrecoRequest request) =>
+app.MapPost("/api/reservas/simular-preco", async (ReservaService service, [FromBody] SimulacaoPrecoRequest request) =>
 {
-    // Validações de entrada
-    if (string.IsNullOrWhiteSpace(request.UsuarioCpf))
-        return Results.BadRequest(new { erro = "CPF do usuário é obrigatório." });
-
-    if (request.UsuarioCpf.Length != 11 || !request.UsuarioCpf.All(char.IsDigit))
-        return Results.BadRequest(new { erro = "CPF deve conter 11 dígitos numéricos." });
-
-    if (request.EventoId <= 0)
-        return Results.BadRequest(new { erro = "EventoId deve ser maior que zero." });
-
-    // Buscar evento para obter PrecoPadrao
-    var evento = await db.QuerySingleOrDefaultAsync<Evento>(
-        "SELECT Id, Nome, CapacidadeTotal, DataEvento, PrecoPadrao FROM Eventos WHERE Id = @Id",
-        new { Id = request.EventoId });
-
-    if (evento is null)
-        return Results.NotFound(new { erro = "Evento não encontrado para o Id informado." });
-
-    // Calcular PrecoBase (PrecoPadrao do Evento)
-    decimal precoBase = evento.PrecoPadrao;
-
-    // Calcular TaxaServico (10% do PrecoBase — regra simples e documentada)
-    decimal taxaServico = Math.Round(precoBase * 0.10m, 2);
-
-    // Calcular ValorDesconto com base no cupom (regra oficial)
-    decimal valorDesconto = 0;
-
-    if (!string.IsNullOrWhiteSpace(request.CupomUtilizado))
-    {
-        var cupom = await db.QuerySingleOrDefaultAsync<Cupom>(
-            "SELECT Codigo, PorcentagemDesconto, ValorMinimoRegra FROM Cupons WHERE Codigo = @Codigo",
-            new { Codigo = request.CupomUtilizado });
-
-        if (cupom is not null)
-        {
-            // Aplica desconto somente se PrecoBase >= ValorMinimoRegra (regra oficial)
-            if (precoBase >= cupom.ValorMinimoRegra)
-            {
-                valorDesconto = Math.Round(precoBase * cupom.PorcentagemDesconto / 100m, 2);
-            }
-        }
-    }
-
-    // Calcular ValorFinal = PrecoBase + TaxaServico - ValorDesconto
-    decimal valorFinal = precoBase + taxaServico - valorDesconto;
-
-    var response = new SimulacaoPrecoResponse
-    {
-        PrecoBase = precoBase,
-        TaxaServico = taxaServico,
-        ValorDesconto = valorDesconto,
-        ValorFinal = valorFinal
-    };
-
-    return Results.Ok(response);
+    var (simulacao, erro, statusCode) = await service.SimularPrecoAsync(request);
+    if (erro is not null)
+        return Results.Json(new { erro }, statusCode: statusCode);
+    return Results.Ok(simulacao);
 });
 
 app.MapGet("/api/eventos", async (EventoService service) =>
@@ -629,26 +498,12 @@ app.MapPost("/api/cupons", async (CupomService service, [FromBody] CupomRequest 
         : Results.BadRequest(new { erro = resultado.Erro });
 });
 
-app.MapGet("/api/reservas/{cpf}", async (IDbConnection db, string cpf) =>
+app.MapGet("/api/reservas/{cpf}", async (ReservaService service, string cpf) =>
 {
-    // Primeiro verifica se o CPF existe como usuário
-    var usuarioExiste = await db.ExecuteScalarAsync<int>(
-        "SELECT COUNT(1) FROM Usuarios WHERE Cpf = @Cpf",
-        new { Cpf = cpf });
-
-    if (usuarioExiste == 0)
-        return Results.NotFound(new { erro = "CPF não encontrado." });
-
-    // Consulta reservas do CPF
-    const string sql = @"
-        SELECT r.Id, r.UsuarioCpf, r.EventoId, e.Nome AS NomeEvento, r.CupomUtilizado, r.ValorFinalPago
-        FROM Reservas r
-        INNER JOIN Eventos e ON r.EventoId = e.Id
-        WHERE r.UsuarioCpf = @Cpf";
-
-    var reservas = await db.QueryAsync<ReservaResponse>(sql, new { Cpf = cpf });
-
-    return Results.Ok(reservas.AsList());
+    var (reservas, erro) = await service.ObterReservasPorCpfAsync(cpf);
+    if (erro is not null)
+        return Results.NotFound(new { erro });
+    return Results.Ok(reservas);
 });
 
 // ==========================================================
