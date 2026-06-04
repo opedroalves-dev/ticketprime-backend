@@ -53,6 +53,14 @@ public interface ICarrinhoRepository
     Task<IEnumerable<CarrinhoItemResponse>> ObterItensResponseAsync(int carrinhoId, IDbTransaction? transaction = null);
 
     /// <summary>
+    /// Retorna os itens crus de um carrinho (sem JOINs), incluindo
+    /// Id, CarrinhoId, EventoId, TipoIngressoId, Quantidade, PrecoUnitario.
+    /// Usado pelo fluxo de confirmação (CarrinhoService.ConfirmarAsync)
+    /// para processar cada item dentro da transação.
+    /// </summary>
+    Task<IEnumerable<CarrinhoItem>> ObterItensPorCarrinhoIdAsync(int carrinhoId, IDbTransaction? transaction = null);
+
+    /// <summary>
     /// Insere um item no carrinho.
     /// </summary>
     Task InserirItemAsync(CarrinhoItem item, IDbTransaction? transaction = null);

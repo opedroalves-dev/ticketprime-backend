@@ -105,11 +105,11 @@ Ao executar os Itens 2 e 3, revisar a implementação antecipada contra os requi
 | **Origem** | Revisão do Item 4 (transação no fluxo de confirmação de carrinho) |
 | **Severidade** | Média |
 | **Prioridade** | Baixa |
-| **Status** | 📝 Registrada |
+| **Status** | 📝 Registrada — adiada para Fase 3 |
 
 ### Descrição
 
-No endpoint de confirmação de carrinho ([`POST /api/carrinho/{cpf}/confirmar`](src/TicketPrime.Api/Program.cs:1696)), a verificação do limite de 2 reservas por CPF por evento é feita dentro de um loop `for (int q = 0; q < item.Quantidade; q++)`, medindo uma reserva de cada vez. Em cenários de concorrência (duas requisições simultâneas para o mesmo CPF+Evento), ambas podem passar na verificação antes que qualquer uma das reservas seja persistida, permitindo que o limite seja ultrapassado.
+No endpoint de confirmação de carrinho (`POST /api/carrinho/{cpf}/confirmar`), a verificação do limite de 2 reservas por CPF por evento é feita dentro de um loop `for (int q = 0; q < item.Quantidade; q++)`, medindo uma reserva de cada vez. Em cenários de concorrência (duas requisições simultâneas para o mesmo CPF+Evento), ambas podem passar na verificação antes que qualquer uma das reservas seja persistida, permitindo que o limite seja ultrapassado.
 
 ### Risco associado
 
@@ -117,13 +117,17 @@ No endpoint de confirmação de carrinho ([`POST /api/carrinho/{cpf}/confirmar`]
 - **Efeito:** Ambas as transações podem passar na verificação `COUNT(1) < 2` antes do commit da outra, resultando em até 4 reservas para o mesmo CPF/evento.
 - **Impacto:** Médio — violação de regra de negócio (limite de 2 reservas), sem perda financeira direta.
 
-### Decisão
+### Decisão (Etapa 11b — Fase 2)
 
-**Não corrigir agora.** O problema é preexistente (já existia antes da transação ser introduzida) e está fora do escopo do Item 4 (atomicidade do fluxo). A correção exigiria uma abordagem de concorrência mais ampla (ex: `sp_getapplock`, `SERIALIZABLE` + otimizações, ou fila de confirmação).
+**Não corrigir agora.** A race condition foi reavaliada durante a Etapa 11b (06/2026) e novamente adiada para a Fase 3. A correção exigiria uma abordagem de concorrência mais ampla. As seguintes estratégias devem ser avaliadas na Fase 3:
+
+1. **UPDLOCK/SERIALIZABLE** — Adicionar `UPDLOCK` na consulta `SELECT COUNT(1) FROM Reservas` dentro da transação, combinado com isolation level `Serializable` para garantir que nenhuma outra transação leia ou escreva no intervalo.
+2. **Isolation level Serializable** — Avaliar se o serializable é suficiente sem `UPDLOCK`, ou se ambos são necessários para evitar幻读 (phantom reads).
+3. **Risco de deadlock** — Testar sob carga concorrente para verificar se `UPDLOCK` + `Serializable` causa deadlocks. Se sim, avaliar `sp_getapplock` como alternativa.
 
 ### Fase sugerida para correção
 
-**Concorrência / Consistência (futura)** — etapa dedicada a cenários de race condition.
+**Fase 3 — Concorrência e Consistência.**
 
 ### Ação corretiva sugerida
 
@@ -138,6 +142,8 @@ Adotar uma das seguintes estratégias:
 - [ ] Duas requisições simultâneas para o mesmo CPF+Evento não ultrapassam o limite de 2 reservas
 - [ ] Teste de concorrência implementado (ex: `Parallel.ForEach` ou `Task.WhenAll`)
 - [ ] Performance não degrada significativamente para cenário normal (1 requisição)
+- [ ] Risco de deadlock avaliado e mitigado
+- [ ] Estratégia de locking documentada no ADR
 
 ---
 

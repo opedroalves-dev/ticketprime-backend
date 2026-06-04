@@ -116,4 +116,12 @@ public class CarrinhoRepository : ICarrinhoRepository
             new { TipoIngressoId = tipoIngressoId, CarrinhoIdExcluir = carrinhoIdExcluir },
             transaction: transaction);
     }
+
+    public async Task<IEnumerable<CarrinhoItem>> ObterItensPorCarrinhoIdAsync(int carrinhoId, IDbTransaction? transaction = null)
+    {
+        return await _db.QueryAsync<CarrinhoItem>(
+            "SELECT Id, CarrinhoId, EventoId, TipoIngressoId, Quantidade, PrecoUnitario FROM CarrinhoItens WHERE CarrinhoId = @CarrinhoId",
+            new { CarrinhoId = carrinhoId },
+            transaction: transaction);
+    }
 }

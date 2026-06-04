@@ -1,4 +1,6 @@
+using System.Data;
 using System.Linq;
+using TicketPrime.Api.Middleware;
 using TicketPrime.Api.Models;
 using TicketPrime.Api.Repositories;
 
@@ -9,6 +11,7 @@ namespace TicketPrime.Api.Services;
 /// Não retorna IResult (preserva separação de responsabilidades com a camada de endpoints).
 /// Não contém SQL (delegado ao repositório).
 /// Criado na Etapa 11a — faz parte da correção C1 (separar CRUD de confirmação).
+/// Expandido na Etapa 11b com ConfirmarAsync (fluxo transacional de confirmação).
 /// </summary>
 public class CarrinhoService
 {
@@ -18,6 +21,8 @@ public class CarrinhoService
     private readonly ITipoIngressoRepository _tipoIngressoRepository;
     private readonly IIngressoRepository _ingressoRepository;
     private readonly IReservaRepository _reservaRepository;
+    private readonly ICupomRepository _cupomRepository;
+    private readonly IDbConnection _db;
 
     public CarrinhoService(
         ICarrinhoRepository carrinhoRepository,
@@ -25,7 +30,9 @@ public class CarrinhoService
         IEventoRepository eventoRepository,
         ITipoIngressoRepository tipoIngressoRepository,
         IIngressoRepository ingressoRepository,
-        IReservaRepository reservaRepository)
+        IReservaRepository reservaRepository,
+        ICupomRepository cupomRepository,
+        IDbConnection db)
     {
         _carrinhoRepository = carrinhoRepository;
         _usuarioRepository = usuarioRepository;
@@ -33,6 +40,8 @@ public class CarrinhoService
         _tipoIngressoRepository = tipoIngressoRepository;
         _ingressoRepository = ingressoRepository;
         _reservaRepository = reservaRepository;
+        _cupomRepository = cupomRepository;
+        _db = db;
     }
 
     // ---------------------------------------------------------------
@@ -233,6 +242,194 @@ public class CarrinhoService
         await _carrinhoRepository.AtualizarStatusAsync(carrinho.Id, "Expirado");
 
         return (true, null);
+    }
+
+    // ---------------------------------------------------------------
+    // e) Confirmar carrinho (substitui POST /api/carrinho/{cpf}/confirmar)
+    // ---------------------------------------------------------------
+    public async Task<(CarrinhoConfirmacaoResponse? Response, string? Erro, int StatusCode)>
+        ConfirmarAsync(string cpf, ConfirmarCarrinhoRequest? request)
+    {
+        // ---------------------------------------------------------------
+        // Validações pré-transação (fora da transação)
+        // ---------------------------------------------------------------
+
+        // 1. Validar CPF
+        if (cpf.Length != 11 || !cpf.All(char.IsDigit))
+            return (null, "CPF deve conter 11 dígitos numéricos.", 400);
+
+        // 2. Extrair cupom (request é opcional)
+        var cupomUtilizado = request?.CupomUtilizado;
+
+        // 3. Buscar carrinho ativo
+        var carrinho = await _carrinhoRepository.ObterAtivoPorCpfAsync(cpf);
+        if (carrinho is null)
+            return (null, "Nenhum carrinho ativo encontrado para este CPF.", 404);
+
+        // 4. Validar expiração
+        if (carrinho.DataExpiracao <= DateTime.Now)
+            return (null, "Carrinho expirado. Crie um novo carrinho.", 400);
+
+        // 5. Verificar se carrinho possui itens
+        var totalItens = await _carrinhoRepository.ContarItensAsync(carrinho.Id);
+        if (totalItens == 0)
+            return (null, "Carrinho vazio. Adicione itens antes de confirmar.", 400);
+
+        // ---------------------------------------------------------------
+        // Transação
+        // ---------------------------------------------------------------
+        if (_db.State != ConnectionState.Open)
+            _db.Open();
+
+        using var transaction = _db.BeginTransaction();
+        try
+        {
+            // 6. Validar cupom se informado
+            Cupom? cupom = null;
+            if (!string.IsNullOrWhiteSpace(cupomUtilizado))
+            {
+                cupom = await _cupomRepository.ObterPorCodigoAsync(cupomUtilizado, transaction);
+                if (cupom is null)
+                    throw new ValidationException("Cupom não encontrado.");
+            }
+
+            // 7. Obter itens do carrinho (via repository — sem SQL direto)
+            var itensCarrinho = await _carrinhoRepository
+                .ObterItensPorCarrinhoIdAsync(carrinho.Id, transaction);
+
+            var reservasCriadas = new List<ReservaConfirmadaResponse>();
+            decimal totalPago = 0;
+
+            // 8. Processar cada item
+            foreach (var item in itensCarrinho)
+            {
+                // 8a. Buscar evento
+                var evento = await _eventoRepository.ObterPorIdAsync(item.EventoId, transaction);
+                if (evento is null)
+                    throw new ValidationException($"Evento {item.EventoId} não encontrado.");
+
+                // 8b. Obter nome do lote se TipoIngressoId informado
+                string nomeLote = "";
+                if (item.TipoIngressoId.HasValue)
+                {
+                    var lote = await _tipoIngressoRepository
+                        .ObterPorIdAsync(item.TipoIngressoId.Value, transaction);
+                    nomeLote = lote?.Nome ?? "";
+                }
+
+                // 8c. Para cada unidade do item
+                for (int q = 0; q < item.Quantidade; q++)
+                {
+                    // 8c.1. Verificar limite de 2 reservas por CPF/evento
+                    var reservasCpfEvento = await _reservaRepository
+                        .ContarPorCpfEEventoAsync(carrinho.UsuarioCpf, item.EventoId, transaction);
+
+                    if (reservasCpfEvento >= 2)
+                        throw new ValidationException(
+                            $"CPF já possui o limite máximo de 2 reservas para o evento {item.EventoId}.");
+
+                    // 8c.2. Verificar capacidade do lote
+                    if (item.TipoIngressoId.HasValue)
+                    {
+                        var lote = await _tipoIngressoRepository
+                            .ObterPorIdAsync(item.TipoIngressoId.Value, transaction);
+
+                        if (lote is not null)
+                        {
+                            var vendidos = await _ingressoRepository
+                                .ContarPorTipoAsync(item.TipoIngressoId.Value, transaction);
+
+                            if (vendidos >= lote.Capacidade)
+                                throw new ValidationException(
+                                    $"Capacidade insuficiente no lote {item.TipoIngressoId}.");
+                        }
+                    }
+
+                    // 8c.3. Calcular valor
+                    decimal valorBruto = item.PrecoUnitario;
+                    decimal valorDesconto = 0;
+                    decimal taxaServico = 0;
+                    decimal valorFinal = valorBruto;
+
+                    if (cupom is not null && evento.PrecoPadrao >= cupom.ValorMinimoRegra)
+                    {
+                        valorDesconto = valorBruto * cupom.PorcentagemDesconto / 100m;
+                        valorFinal = valorBruto - valorDesconto;
+                    }
+
+                    // 8c.4. Inserir reserva
+                    var reserva = new Reserva
+                    {
+                        UsuarioCpf = carrinho.UsuarioCpf,
+                        EventoId = item.EventoId,
+                        CupomUtilizado = cupom?.Codigo,
+                        ValorFinalPago = valorFinal
+                    };
+
+                    var reservaId = await _reservaRepository.InserirAsync(reserva, transaction);
+
+                    // 8c.5. Gerar código único para o ingresso
+                    var codigoUnico = await _ingressoRepository
+                        .GerarCodigoUnicoAsync(transaction, 30);
+
+                    // 8c.6. Inserir ingresso
+                    var ingresso = new Ingresso
+                    {
+                        ReservaId = reservaId,
+                        TipoIngressoId = item.TipoIngressoId,
+                        CodigoUnico = codigoUnico,
+                        Status = "Confirmada",
+                        ValorBruto = valorBruto,
+                        ValorDesconto = valorDesconto,
+                        TaxaServico = taxaServico,
+                        ValorFinal = valorFinal,
+                        DataCriacao = DateTime.Now
+                    };
+
+                    var (ingressoId, _) = await _ingressoRepository.InserirAsync(ingresso, transaction);
+
+                    // 8c.7. Adicionar ao response
+                    reservasCriadas.Add(new ReservaConfirmadaResponse
+                    {
+                        ReservaId = reservaId,
+                        IngressoId = ingressoId,
+                        CodigoUnico = codigoUnico,
+                        EventoId = item.EventoId,
+                        NomeEvento = evento.Nome,
+                        TipoIngresso = nomeLote,
+                        ValorFinal = valorFinal,
+                        Status = "Confirmada"
+                    });
+
+                    totalPago += valorFinal;
+                }
+            }
+
+            // 9. Marcar carrinho como Confirmado
+            await _carrinhoRepository.AtualizarStatusAsync(carrinho.Id, "Confirmado", transaction);
+
+            // 10. Limpar itens do carrinho
+            await _carrinhoRepository.RemoverItensAsync(carrinho.Id, transaction);
+
+            // 11. Commit
+            transaction.Commit();
+
+            // 12. Montar response
+            var response = new CarrinhoConfirmacaoResponse
+            {
+                Mensagem = "Carrinho confirmado com sucesso.",
+                CarrinhoId = carrinho.Id,
+                ReservasCriadas = reservasCriadas,
+                TotalPago = totalPago
+            };
+
+            return (response, null, 201);
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
     }
 
     // ---------------------------------------------------------------
