@@ -4,8 +4,10 @@ Backend/API do TicketPrime para venda de ingressos, cadastro de eventos, cupons,
 
 ### Membros
 
+```
 | Gabriel de Jesus L
 | Pedro Henrique Alves
+```
 
 ---
 
