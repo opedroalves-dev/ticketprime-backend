@@ -2,6 +2,11 @@
 
 Backend/API do TicketPrime para venda de ingressos, cadastro de eventos, cupons, usuários e reservas, utilizando **.NET 8**, **Minimal API**, **Dapper** e **SQL Server**.
 
+### Membros
+
+| Gabriel de Jesus L
+| Pedro Henrique Alves
+
 ---
 
 ## Objetivo do Sistema
