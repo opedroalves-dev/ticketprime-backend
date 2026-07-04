@@ -35,6 +35,9 @@ builder.Services.AddScoped<ICarrinhoRepository, CarrinhoRepository>();
 builder.Services.AddScoped<CarrinhoService>();
 builder.Services.AddScoped<DashboardService>();
 
+builder.Services.AddControllers();
+
+
 // Configura JSON para aceitar tanto camelCase quanto PascalCase no corpo da requisição
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -64,6 +67,14 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// serve index.html automaticamente
+app.UseDefaultFiles();
+
+// libera arquivos estáticos (CSS, JS, HTML)
+app.UseStaticFiles();
+
+app.UseHttpsRedirection();
 
 // Middleware global de exception handling (Item 3)
 app.UseMiddleware<TicketPrime.Api.Middleware.ExceptionHandlingMiddleware>();
@@ -97,13 +108,29 @@ app.MapGet("/", () => Results.Redirect("/index.html"));
 // ENDPOINTS EXISTENTES (preservados)
 // ==========================================================
 
+app.MapPost("/api/login", async (IUsuarioRepository repo, UsuarioRequest request) =>
+{
+    var usuario = await repo.ObterPorCpfAsync(request.Cpf);
+
+    if (usuario is null)
+        return Results.NotFound();
+
+    return Results.Ok(new
+    {
+        token = Guid.NewGuid().ToString(),
+        usuario
+    });
+})
+.AllowAnonymous();
+
 app.MapPost("/api/usuarios", async (UsuarioService service, [FromBody] UsuarioRequest request) =>
 {
     var resultado = await service.CriarAsync(request);
     return resultado.Sucesso
         ? Results.Created($"/api/usuarios/{resultado.Cpf}", resultado.Usuario)
         : Results.BadRequest(new { erro = resultado.Erro });
-});
+})
+.AllowAnonymous();
 
 app.MapPost("/api/eventos", async (EventoService service, [FromBody] EventoRequest request) =>
 {
@@ -111,7 +138,8 @@ app.MapPost("/api/eventos", async (EventoService service, [FromBody] EventoReque
     return resultado.Sucesso
         ? Results.Created($"/api/eventos/{resultado.Id}", resultado.Evento)
         : Results.BadRequest(new { erro = resultado.Erro });
-});
+})
+.RequireAuthorization();
 
 app.MapPost("/api/reservas", async (ReservaService service, [FromBody] ReservaRequest request) =>
 {
