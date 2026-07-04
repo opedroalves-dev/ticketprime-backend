@@ -1,46 +1,377 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TicketPrime API</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-        }
-        .container {
-            text-align: center;
-            padding: 2rem;
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        }
-        h1 { font-size: 2.5rem; margin-bottom: 1rem; }
-        p { font-size: 1.1rem; opacity: 0.9; margin-bottom: 0.5rem; }
-        .badge {
-            display: inline-block;
-            background: rgba(255,255,255,0.2);
-            padding: 0.5rem 1rem;
-            border-radius: 50px;
-            font-size: 0.9rem;
-            margin-top: 1rem;
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TicketPrime • Feed</title>
+
+<style>
+:root {
+    font-family: system-ui, Arial;
+    background: #0f172a;
+    color: #e5e7eb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: #0b1220;
+}
+
+/* HEADER */
+header {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 10;
+}
+
+header h1 {
+    font-size: 18px;
+    margin: 0;
+    color: #6366f1;
+}
+
+/* LAYOUT */
+.container {
+    display: grid;
+    grid-template-columns: 260px 1fr 320px;
+    gap: 16px;
+    padding: 80px 16px 16px;
+    max-width: 1200px;
+    margin: auto;
+}
+
+/* SIDEBAR */
+.sidebar {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 12px;
+    height: fit-content;
+}
+
+.sidebar button {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 10px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+    background: #1f2937;
+    color: white;
+}
+
+.sidebar button:hover {
+    background: #374151;
+}
+
+/* FEED */
+.feed {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.post {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 12px;
+}
+
+/* RIGHT PANEL */
+.panel {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 12px;
+}
+
+/* FORM */
+input, button {
+    width: 100%;
+    padding: 10px;
+    margin-top: 6px;
+    border-radius: 10px;
+    border: 1px solid #1f2937;
+    background: #0b1220;
+    color: white;
+}
+
+button {
+    cursor: pointer;
+    background: linear-gradient(135deg, #6366f1, #ec4899);
+    border: none;
+    font-weight: bold;
+}
+
+label {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-top: 10px;
+    display: block;
+}
+</style>
 </head>
+
 <body>
-    <div class="container">
-        <h1>🎫 TicketPrime API</h1>
-        <p>API de gerenciamento de eventos e ingressos</p>
-        <p>✅ Servidor rodando com sucesso!</p>
-        <div class="badge">🚀 .NET 8.0 · SQL Server · Dapper</div>
+
+<header>
+    <h1>🎫 TicketPrime</h1>
+    <div id="status">API conectada</div>
+</header>
+
+<div class="container">
+
+    <!-- LEFT -->
+    <div class="sidebar">
+
+        <button onclick="showView('login')">🔐 Login</button>
+
+        <button id="btnEventos" onclick="showView('event')" style="display:none">
+        🎉 Eventos
+        </button>
+
     </div>
+
+    <!-- FEED -->
+    <div class="feed">
+
+        <div class="post" id="view-event" style="display:none">
+
+    <h3>Eventos</h3>
+
+    <button onclick="listEvents()">
+        Atualizar Lista
+    </button>
+
+    <div id="eventsList" style="margin-top:15px;"></div>
+
+    <hr style="margin:25px 0;border-color:#374151;">
+
+    <h3>Novo Evento</h3>
+
+    <label>Nome</label>
+    <input id="eventName">
+
+    <label>Capacidade</label>
+    <input id="eventCapacity" type="number">
+
+    <label>Data</label>
+    <input id="eventDate" type="datetime-local">
+
+    <label>Preço</label>
+    <input id="eventPrice" type="number">
+
+    <button onclick="createEvent()">
+        Criar Evento
+    </button>
+
+</div>
+
+<div class="post" id="view-login" style="display:none">
+
+    <h3>Login</h3>
+
+    <label>CPF</label>
+    <input id="loginCpf">
+
+    <button onclick="login()">Entrar</button>
+
+    <p id="loginStatus"></p>
+
+    <hr style="margin:25px 0;border-color:#374151;">
+
+    <h3>Criar Conta</h3>
+
+    <label>CPF</label>
+    <input id="userCpf">
+
+    <label>Nome</label>
+    <input id="userNome">
+
+    <label>Email</label>
+    <input id="userEmail">
+
+    <button onclick="createEventCustom()">
+    Criar Evento
+    </button>
+
+</div>
+
+    <!-- RIGHT -->
+    <div class="panel">
+        <h3>Atividade</h3>
+        <p>Respostas da API aparecem no console.</p>
+    </div>
+
+</div>
+
+<script>
+    
+const apiBaseUrl = window.location.origin;
+
+let authToken = localStorage.getItem("token");
+let isLogged = !!authToken;
+
+function showView(view) {
+
+    document.querySelectorAll(".post").forEach(p => p.style.display = "none");
+
+    // se não estiver logado, só permite login
+    if (!isLogged && view !== "login") {
+        document.getElementById("view-login").style.display = "block";
+        return;
+    }
+
+    document.getElementById("view-" + view).style.display = "block";
+
+    if (view === "event" && isLogged) {
+        listEvents();
+    }
+}
+
+function show(data) {
+    console.log("API RESPONSE:", data);
+}
+
+/* REQUEST */
+async function req(path, options = {}) {
+
+    options.headers = {
+        "Content-Type": "application/json",
+        ...(authToken ? { "Authorization": "Bearer " + authToken } : {}),
+        ...(options.headers || {})
+    };
+
+    const res = await fetch(apiBaseUrl + path, options);
+
+    let data;
+
+    const contentType = res.headers.get("content-type");
+
+    if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+    } else {
+        data = await res.text();
+    }
+
+    console.log("API RESPONSE:", data);
+
+    return data;
+}
+
+/* USER */
+async function createUser() {
+
+    await req("/api/usuarios", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            Cpf: userCpf.value,
+            Nome: userNome.value,
+            Email: userEmail.value
+        })
+    });
+
+}
+
+/* EVENT */
+async function createEventCustom() {
+    req("/api/eventos", {
+        method: "POST",
+        body: JSON.stringify({
+            Nome: eventName.value,
+            CapacidadeTotal: Number(eventCapacity.value),
+            DataEvento: eventDate.value,
+            PrecoPadrao: Number(eventPrice.value)
+        })
+    });
+
+}
+
+async function listEvents(){
+
+    const eventos = await req("/api/eventos");
+
+    const div = document.getElementById("eventsList");
+
+    if(!Array.isArray(eventos)){
+        div.innerHTML = "<p>Nenhum evento encontrado.</p>";
+        return;
+    }
+
+    div.innerHTML = "";
+
+    eventos.forEach(e=>{
+
+        div.innerHTML += `
+            <div style="
+                margin-top:12px;
+                padding:12px;
+                border:1px solid #374151;
+                border-radius:10px;
+            ">
+                <strong>${e.nome ?? e.Nome}</strong><br>
+
+                 ${new Date(e.dataEvento ?? e.DataEvento).toLocaleString()}<br>
+
+                 ${e.capacidadeTotal ?? e.CapacidadeTotal}<br>
+
+                 R$ ${e.precoPadrao ?? e.PrecoPadrao}
+            </div>
+        `;
+
+    });
+
+}
+
+/* LOGIN */
+async function login() {
+
+    const res = await fetch(apiBaseUrl + "/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpf: loginCpf.value })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+        loginStatus.textContent = data.message || "Erro ao logar";
+        loginStatus.style.color = "red";
+        return;
+    }
+
+    authToken = data.token;
+    localStorage.setItem("token", authToken);
+
+    isLogged = true;
+
+    loginStatus.textContent = "Logado com sucesso!";
+    loginStatus.style.color = "lightgreen";
+
+    // libera eventos
+    document.getElementById("btnEventos").style.display = "block";
+
+    // opcional: ir direto para eventos
+    showView("event");
+
+    if (isLogged) {
+    document.getElementById("btnEventos").style.display = "block";
+    }
+}
+</script>
+
 </body>
 </html>
