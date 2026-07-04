@@ -2,8 +2,18 @@
 -- TicketPrime - Script Completo do Schema do Banco de Dados
 -- Versão: 2.0.0
 -- Descrição: Estrutura completa do banco de dados TicketPrime
---            conforme enunciado oficial e compatível com a API.
 -- ============================================================
+
+-- Cria o banco caso ele não exista
+IF DB_ID('TicketPrime') IS NULL
+BEGIN
+    CREATE DATABASE TicketPrime;
+END;
+GO
+
+-- Seleciona o banco
+USE TicketPrime;
+GO
 
 -- ============================================================
 -- Tabela: Usuarios
@@ -19,11 +29,11 @@ CREATE TABLE Usuarios (
 -- Tabela: Eventos
 -- ============================================================
 CREATE TABLE Eventos (
-    Id               INT IDENTITY(1,1)   NOT NULL,
-    Nome             VARCHAR(200)        NOT NULL,
-    CapacidadeTotal  INT                 NOT NULL,
-    DataEvento       DATETIME            NOT NULL,
-    PrecoPadrao      DECIMAL(10,2)       NOT NULL,
+    Id               INT IDENTITY(1,1) NOT NULL,
+    Nome             VARCHAR(200)      NOT NULL,
+    CapacidadeTotal  INT               NOT NULL,
+    DataEvento       DATETIME          NOT NULL,
+    PrecoPadrao      DECIMAL(10,2)     NOT NULL,
     CONSTRAINT PK_Eventos PRIMARY KEY (Id)
 );
 
@@ -41,11 +51,11 @@ CREATE TABLE Cupons (
 -- Tabela: Reservas
 -- ============================================================
 CREATE TABLE Reservas (
-    Id              INT IDENTITY(1,1)   NOT NULL,
-    UsuarioCpf      VARCHAR(11)         NOT NULL,
-    EventoId        INT                 NOT NULL,
-    CupomUtilizado  VARCHAR(50)         NULL,
-    ValorFinalPago  DECIMAL(10,2)       NOT NULL,
+    Id              INT IDENTITY(1,1) NOT NULL,
+    UsuarioCpf      VARCHAR(11)       NOT NULL,
+    EventoId        INT               NOT NULL,
+    CupomUtilizado  VARCHAR(50)       NULL,
+    ValorFinalPago  DECIMAL(10,2)     NOT NULL,
     CONSTRAINT PK_Reservas PRIMARY KEY (Id),
     CONSTRAINT FK_Reservas_Usuarios FOREIGN KEY (UsuarioCpf)
         REFERENCES Usuarios(Cpf),
