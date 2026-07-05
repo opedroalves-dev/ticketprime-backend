@@ -5,8 +5,8 @@ Backend/API do TicketPrime para venda de ingressos, cadastro de eventos, cupons,
 ### Membros
 
 ```
-| Gabriel de Jesus L
-| Pedro Henrique Alves
+| Gabriel de Jesus L - 06009870
+| Pedro Henrique Alves - 06003335
 ```
 
 ---
